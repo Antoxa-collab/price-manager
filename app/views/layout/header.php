@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Price Manager - Калькулятор цен для маркетплейсов">
+    <title><?= e($pageTitle ?? 'Price Manager') ?> - <?= APP_NAME ?></title>
+
+    <!-- Bootstrap 5.3 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Верхняя навигация -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <i class="bi bi-calculator me-2"></i>
+                <?= APP_NAME ?>
+            </a>
+
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link <?= isActive('/') ?>" href="/">
+                            <i class="bi bi-calculator me-1"></i> Калькулятор
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link <?= isActive('/products') ?>" href="/products">
+                            <i class="bi bi-box-seam me-1"></i> Товары
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link <?= isActive('/history') ?>" href="/history">
+                            <i class="bi bi-clock-history me-1"></i> История
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link <?= isActive('/settings') ?>" href="/settings">
+                            <i class="bi bi-gear me-1"></i> Настройки
+                        </a>
+                    </li>
+                </ul>
+
+                <?php if (isset($auth) && $auth->isLoggedIn()): ?>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle me-1"></i>
+                            <?= e($auth->getUsername()) ?>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" href="/settings">
+                                    <i class="bi bi-gear me-2"></i> Настройки
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item text-danger" href="/logout">
+                                    <i class="bi bi-box-arrow-right me-2"></i> Выход
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+                <?php endif; ?>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Основной контейнер -->
+    <div class="wrapper">
+        <?php if (isset($auth) && $auth->isLoggedIn()): ?>
+        <!-- Боковое меню -->
+        <?php include VIEWS_PATH . '/layout/sidebar.php'; ?>
+        <?php endif; ?>
+
+        <!-- Основной контент -->
+        <main class="main-content <?= (isset($auth) && $auth->isLoggedIn()) ? 'with-sidebar' : '' ?>">
+            <div class="container-fluid py-4">
+                <!-- Flash сообщения -->
+                <?php foreach (getFlash() as $flash): ?>
+                <div class="alert alert-<?= $flash['type'] === 'error' ? 'danger' : e($flash['type']) ?> alert-dismissible fade show" role="alert">
+                    <?= e($flash['message']) ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                <?php endforeach; ?>

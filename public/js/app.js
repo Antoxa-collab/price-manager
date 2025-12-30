@@ -1,0 +1,313 @@
+/**
+ * Price Manager - Общие функции приложения
+ */
+
+const App = {
+    /**
+     * Инициализация приложения
+     */
+    init() {
+        this.initTooltips();
+        this.initToastContainer();
+        this.initAutoHideAlerts();
+    },
+
+    /**
+     * Инициализация Bootstrap tooltips
+     */
+    initTooltips() {
+        const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        tooltips.forEach(el => new bootstrap.Tooltip(el));
+    },
+
+    /**
+     * Создание контейнера для toast-уведомлений
+     */
+    initToastContainer() {
+        if (!document.querySelector('.toast-container')) {
+            const container = document.createElement('div');
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+    },
+
+    /**
+     * Автоматическое скрытие алертов
+     */
+    initAutoHideAlerts() {
+        const alerts = document.querySelectorAll('.alert-dismissible');
+        alerts.forEach(alert => {
+            setTimeout(() => {
+                const bsAlert = bootstrap.Alert.getOrCreateInstance(alert);
+                if (bsAlert) {
+                    bsAlert.close();
+                }
+            }, 5000);
+        });
+    },
+
+    /**
+     * Показать toast-уведомление
+     * @param {string} message - Текст сообщения
+     * @param {string} type - Тип (success, danger, warning, info)
+     * @param {number} duration - Длительность показа в мс
+     */
+    showToast(message, type = 'info', duration = 4000) {
+        const container = document.querySelector('.toast-container');
+        const id = 'toast-' + Date.now();
+
+        const icons = {
+            success: 'bi-check-circle-fill',
+            danger: 'bi-exclamation-triangle-fill',
+            warning: 'bi-exclamation-circle-fill',
+            info: 'bi-info-circle-fill'
+        };
+
+        const html = `
+            <div id="${id}" class="toast align-items-center border-${type}" role="alert">
+                <div class="d-flex">
+                    <div class="toast-body d-flex align-items-center gap-2">
+                        <i class="bi ${icons[type] || icons.info} text-${type}"></i>
+                        <span>${this.escapeHtml(message)}</span>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            </div>
+        `;
+
+        container.insertAdjacentHTML('beforeend', html);
+
+        const toastEl = document.getElementById(id);
+        const toast = new bootstrap.Toast(toastEl, {
+            autohide: true,
+            delay: duration
+        });
+
+        toastEl.addEventListener('hidden.bs.toast', () => {
+            toastEl.remove();
+        });
+
+        toast.show();
+    },
+
+    /**
+     * Показать модальное окно загрузки
+     * @param {string} message - Текст сообщения
+     */
+    showLoading(message = 'Загрузка...') {
+        const modal = document.getElementById('loadingModal');
+        const messageEl = document.getElementById('loadingMessage');
+
+        if (modal && messageEl) {
+            messageEl.textContent = message;
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+        }
+    },
+
+    /**
+     * Скрыть модальное окно загрузки
+     */
+    hideLoading() {
+        const modal = document.getElementById('loadingModal');
+        if (modal) {
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            if (bsModal) {
+                bsModal.hide();
+            }
+        }
+    },
+
+    /**
+     * Показать диалог подтверждения
+     * @param {string} message - Текст сообщения
+     * @param {string} title - Заголовок
+     * @returns {Promise<boolean>}
+     */
+    confirm(message, title = 'Подтверждение') {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('confirmModal');
+            const titleEl = document.getElementById('confirmTitle');
+            const messageEl = document.getElementById('confirmMessage');
+            const confirmBtn = document.getElementById('confirmButton');
+
+            if (!modal || !titleEl || !messageEl || !confirmBtn) {
+                resolve(window.confirm(message));
+                return;
+            }
+
+            titleEl.textContent = title;
+            messageEl.textContent = message;
+
+            const bsModal = new bootstrap.Modal(modal);
+
+            const handleConfirm = () => {
+                bsModal.hide();
+                resolve(true);
+            };
+
+            const handleCancel = () => {
+                resolve(false);
+            };
+
+            confirmBtn.onclick = handleConfirm;
+            modal.addEventListener('hidden.bs.modal', handleCancel, { once: true });
+
+            bsModal.show();
+        });
+    },
+
+    /**
+     * AJAX запрос
+     * @param {string} url - URL запроса
+     * @param {Object} options - Опции запроса
+     * @returns {Promise}
+     */
+    async fetch(url, options = {}) {
+        const defaultOptions = {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            }
+        };
+
+        // Добавляем CSRF токен для POST запросов
+        if (options.method === 'POST' && window.csrfToken) {
+            if (options.body instanceof FormData) {
+                options.body.append('csrf_token', window.csrfToken);
+            } else {
+                defaultOptions.headers['Content-Type'] = 'application/json';
+                if (typeof options.body === 'object') {
+                    options.body = JSON.stringify({
+                        ...options.body,
+                        csrf_token: window.csrfToken
+                    });
+                }
+            }
+        }
+
+        const mergedOptions = { ...defaultOptions, ...options };
+        mergedOptions.headers = { ...defaultOptions.headers, ...options.headers };
+
+        try {
+            const response = await fetch(url, mergedOptions);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Ошибка запроса');
+            }
+
+            return data;
+        } catch (error) {
+            console.error('Fetch error:', error);
+            throw error;
+        }
+    },
+
+    /**
+     * Форматирование числа как цены
+     * @param {number} price - Цена
+     * @param {string} currency - Валюта
+     * @returns {string}
+     */
+    formatPrice(price, currency = 'RUB') {
+        const formatted = new Intl.NumberFormat('ru-RU', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(price);
+
+        const symbols = { RUB: '₽', USD: '$', EUR: '€' };
+        return `${formatted} ${symbols[currency] || currency}`;
+    },
+
+    /**
+     * Форматирование даты
+     * @param {string} dateStr - Дата в формате ISO
+     * @returns {string}
+     */
+    formatDate(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    },
+
+    /**
+     * Экранирование HTML
+     * @param {string} text - Текст
+     * @returns {string}
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    /**
+     * Debounce функция
+     * @param {Function} func - Функция
+     * @param {number} wait - Задержка в мс
+     * @returns {Function}
+     */
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    },
+
+    /**
+     * Получение данных формы как объекта
+     * @param {HTMLFormElement} form - Форма
+     * @returns {Object}
+     */
+    getFormData(form) {
+        const formData = new FormData(form);
+        const data = {};
+        for (const [key, value] of formData.entries()) {
+            data[key] = value;
+        }
+        return data;
+    },
+
+    /**
+     * Валидация формы
+     * @param {HTMLFormElement} form - Форма
+     * @returns {boolean}
+     */
+    validateForm(form) {
+        if (!form.checkValidity()) {
+            form.classList.add('was-validated');
+            return false;
+        }
+        return true;
+    },
+
+    /**
+     * Копирование текста в буфер обмена
+     * @param {string} text - Текст
+     * @returns {Promise}
+     */
+    async copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            this.showToast('Скопировано в буфер обмена', 'success');
+        } catch (err) {
+            console.error('Copy failed:', err);
+            this.showToast('Не удалось скопировать', 'danger');
+        }
+    }
+};
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => App.init());
