@@ -8,12 +8,15 @@
 define('DEBUG_MODE', true);
 
 // Настройка отображения ошибок
-if (DEBUG_MODE) {
-    error_reporting(E_ALL);
-    ini_set('display_errors', 1);
-} else {
-    error_reporting(0);
+error_reporting(E_ALL);
+
+// Для API запросов всегда скрываем display_errors чтобы не ломать JSON
+$isApiRequest = isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/api/') !== false;
+if ($isApiRequest || !DEBUG_MODE) {
     ini_set('display_errors', 0);
+    ini_set('html_errors', 0);
+} else {
+    ini_set('display_errors', 1);
 }
 
 // Настройки базы данных

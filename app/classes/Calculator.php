@@ -270,4 +270,317 @@ class Calculator
     {
         return [3, 4, 6, 8, 10, 12, 15, 18, 21];
     }
+
+    /**
+     * Расчёт цен для Ozon с двумя уровнями наценки
+     *
+     * @param float $basePrice Закупочная цена за единицу
+     * @param float $markupMinPrice Наценка для минимальной цены (%)
+     * @param float $markupYourPrice Дополнительная наценка для "вашей цены" (%)
+     * @param int $quantityInPack Количество единиц в упаковке на Ozon
+     * @return array
+     */
+    public function calculateOzonPrices(
+        float $basePrice,
+        float $markupMinPrice,
+        float $markupYourPrice,
+        int $quantityInPack = 1
+    ): array {
+        // Расчёт базовой цены за упаковку
+        $basePricePerPack = $basePrice * $quantityInPack;
+
+        // Минимальная цена = закупочная + наценка для мин.цены
+        $minPriceRaw = $basePricePerPack * (1 + $markupMinPrice / 100);
+        $minPrice = $this->rounder->round($minPriceRaw);
+
+        // Ваша цена = минимальная + доп.наценка
+        $yourPriceRaw = $minPrice * (1 + $markupYourPrice / 100);
+        $yourPrice = $this->rounder->round($yourPriceRaw);
+
+        // Старая цена (зачёркнутая) = ваша цена + 15-20% для визуального эффекта скидки
+        $oldPriceRaw = $yourPrice * 1.15;
+        $oldPrice = $this->rounder->round($oldPriceRaw);
+
+        return [
+            'base_price_per_unit' => $basePrice,
+            'base_price_per_pack' => $basePricePerPack,
+            'quantity_in_pack' => $quantityInPack,
+            'min_price_raw' => round($minPriceRaw, 2),
+            'min_price' => $minPrice,
+            'your_price_raw' => round($yourPriceRaw, 2),
+            'your_price' => $yourPrice,
+            'old_price' => $oldPrice,
+            'markup_min_price' => $markupMinPrice,
+            'markup_your_price' => $markupYourPrice,
+            'profit_min' => round($minPrice - $basePricePerPack, 2),
+            'profit_your' => round($yourPrice - $basePricePerPack, 2),
+            'margin_min_percent' => $basePricePerPack > 0
+                ? round((($minPrice - $basePricePerPack) / $basePricePerPack) * 100, 2)
+                : 0,
+            'margin_your_percent' => $basePricePerPack > 0
+                ? round((($yourPrice - $basePricePerPack) / $basePricePerPack) * 100, 2)
+                : 0
+        ];
+    }
+
+    /**
+     * Массовый расчёт цен для товаров с сопоставлениями
+     *
+     * @param array $mappedProducts Массив товаров с сопоставлениями (из ProductMapping::getMappedProducts)
+     * @return array
+     */
+    public function calculateOzonPricesBulk(array $mappedProducts): array
+    {
+        $results = [];
+
+        foreach ($mappedProducts as $product) {
+            $basePrice = (float)($product['base_price'] ?? 0);
+            $markupMinPrice = (float)($product['markup_min_price'] ?? 20);
+            $markupYourPrice = (float)($product['markup_your_price'] ?? 5);
+            $quantityInPack = (int)($product['quantity_in_pack'] ?? 1);
+
+            $calculated = $this->calculateOzonPrices(
+                $basePrice,
+                $markupMinPrice,
+                $markupYourPrice,
+                $quantityInPack
+            );
+
+            $results[] = array_merge($product, [
+                'calculated' => $calculated,
+                'new_min_price' => $calculated['min_price'],
+                'new_your_price' => $calculated['your_price'],
+                'new_old_price' => $calculated['old_price'],
+                'price_changed' => (
+                    ($product['mp_min_price'] ?? 0) != $calculated['min_price'] ||
+                    ($product['mp_price'] ?? 0) != $calculated['your_price']
+                )
+            ]);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Подготовка данных для отправки в Ozon API
+     *
+     * @param array $calculatedProducts Массив рассчитанных товаров
+     * @param bool $onlyChanged Только изменённые
+     * @return array
+     */
+    public function prepareOzonPriceUpdate(array $calculatedProducts, bool $onlyChanged = true): array
+    {
+        $pricesForApi = [];
+
+        foreach ($calculatedProducts as $product) {
+            if ($onlyChanged && !$product['price_changed']) {
+                continue;
+            }
+
+            $pricesForApi[] = [
+                'product_id' => (int)$product['marketplace_product_id'],
+                'price' => $product['new_your_price'],
+                'min_price' => $product['new_min_price'],
+                'old_price' => $product['new_old_price'],
+                // Метаданные для истории
+                'our_product_id' => $product['id'] ?? null,
+                'mapping_id' => $product['mapping_id'] ?? null,
+                'old_mp_price' => $product['mp_price'] ?? null,
+                'old_mp_min_price' => $product['mp_min_price'] ?? null
+            ];
+        }
+
+        return $pricesForApi;
+    }
+
+    /**
+     * Обновление наценок для товара
+     *
+     * @param int $productId ID товара
+     * @param float $markupMinPrice Наценка для минимальной цены (%)
+     * @param float $markupYourPrice Доп.наценка для вашей цены (%)
+     * @return bool
+     */
+    public function updateProductMarkups(int $productId, float $markupMinPrice, float $markupYourPrice): bool
+    {
+        $oldProduct = $this->getProduct($productId);
+
+        $result = $this->db->update(
+            'products',
+            [
+                'markup_min_price' => $markupMinPrice,
+                'markup_your_price' => $markupYourPrice
+            ],
+            'id = ?',
+            [$productId]
+        );
+
+        if ($result > 0) {
+            $log = new OperationsLog();
+            $log->add(
+                'update_markups',
+                'product',
+                $productId,
+                [
+                    'markup_min_price' => $oldProduct['markup_min_price'] ?? 0,
+                    'markup_your_price' => $oldProduct['markup_your_price'] ?? 0
+                ],
+                [
+                    'markup_min_price' => $markupMinPrice,
+                    'markup_your_price' => $markupYourPrice
+                ]
+            );
+        }
+
+        return $result > 0;
+    }
+
+    /**
+     * Массовое обновление наценок для группы товаров
+     *
+     * @param array $productIds Массив ID товаров
+     * @param float $markupMinPrice Наценка для минимальной цены (%)
+     * @param float $markupYourPrice Доп.наценка для вашей цены (%)
+     * @return int Количество обновлённых товаров
+     */
+    public function bulkUpdateMarkups(array $productIds, float $markupMinPrice, float $markupYourPrice): int
+    {
+        $updated = 0;
+
+        foreach ($productIds as $productId) {
+            if ($this->updateProductMarkups((int)$productId, $markupMinPrice, $markupYourPrice)) {
+                $updated++;
+            }
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Получение товаров с сопоставлениями для калькулятора Ozon
+     *
+     * @param string $marketplace Маркетплейс
+     * @param array $filters Фильтры
+     * @return array
+     */
+    public function getProductsForOzonCalculator(string $marketplace = 'ozon', array $filters = []): array
+    {
+        $sql = "SELECT p.*, pm.id as mapping_id, pm.marketplace_product_id,
+                       pm.marketplace_sku, pm.marketplace_offer_id, pm.marketplace_name,
+                       pm.quantity_in_pack,
+                       mpc.price as mp_price, mpc.min_price as mp_min_price,
+                       mpc.old_price as mp_old_price, mpc.stock as mp_stock
+                FROM products p
+                INNER JOIN product_mappings pm ON pm.product_id = p.id
+                LEFT JOIN marketplace_products_cache mpc
+                    ON mpc.marketplace = pm.marketplace
+                    AND mpc.product_id = pm.marketplace_product_id
+                WHERE pm.marketplace = ? AND pm.is_active = 1 AND p.is_active = 1";
+
+        $params = [$marketplace];
+
+        // Фильтр по категории
+        if (!empty($filters['category'])) {
+            $sql .= " AND p.category = ?";
+            $params[] = $filters['category'];
+        }
+
+        // Фильтр по сорту
+        if (!empty($filters['grade'])) {
+            $sql .= " AND p.grade = ?";
+            $params[] = $filters['grade'];
+        }
+
+        // Фильтр по толщине
+        if (!empty($filters['thickness'])) {
+            $sql .= " AND p.thickness = ?";
+            $params[] = (float)$filters['thickness'];
+        }
+
+        // Поиск
+        if (!empty($filters['search'])) {
+            $sql .= " AND (p.name LIKE ? OR p.sku LIKE ? OR pm.marketplace_offer_id LIKE ?)";
+            $searchTerm = '%' . $filters['search'] . '%';
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
+
+        $sql .= " ORDER BY p.category, p.name, pm.quantity_in_pack";
+
+        return $this->db->fetchAll($sql, $params);
+    }
+
+    /**
+     * Получение списка категорий
+     *
+     * @return array
+     */
+    public function getCategories(): array
+    {
+        return $this->db->fetchAll(
+            "SELECT DISTINCT category FROM products WHERE is_active = 1 AND category IS NOT NULL ORDER BY category"
+        );
+    }
+
+    /**
+     * Получение товаров с сопоставлениями (для выпадающего списка калькулятора)
+     *
+     * @param string $marketplace Маркетплейс
+     * @return array
+     */
+    public function getProductsWithMappings(string $marketplace = 'ozon'): array
+    {
+        $sql = "SELECT p.*,
+                       COUNT(pm.id) as mapping_count
+                FROM products p
+                INNER JOIN product_mappings pm ON pm.product_id = p.id
+                WHERE pm.marketplace = ? AND pm.is_active = 1 AND p.is_active = 1
+                GROUP BY p.id
+                ORDER BY p.name";
+
+        return $this->db->fetchAll($sql, [$marketplace]);
+    }
+
+    /**
+     * Создание нового товара
+     *
+     * @param array $data Данные товара
+     * @return int ID созданного товара
+     */
+    public function createProduct(array $data): int
+    {
+        $productData = [
+            'name' => sanitize($data['name'] ?? ''),
+            'sku' => sanitize($data['sku'] ?? '') ?: $this->generateSku(),
+            'category' => sanitize($data['category'] ?? ''),
+            'material_type' => sanitize($data['material_type'] ?? ''),
+            'grade' => sanitize($data['grade'] ?? ''),
+            'thickness' => isset($data['thickness']) ? (float)$data['thickness'] : null,
+            'cost_price' => (float)($data['cost_price'] ?? 0),
+            'base_price' => (float)($data['base_price'] ?? $data['cost_price'] ?? 0),
+            'markup_min_price' => (float)($data['markup_min_price'] ?? 20),
+            'markup_your_price' => (float)($data['markup_your_price'] ?? 5),
+            'is_active' => 1,
+            'created_by' => $data['created_by'] ?? null
+        ];
+
+        $productId = $this->db->insert('products', $productData);
+
+        // Логируем создание
+        $log = new OperationsLog();
+        $log->add('create_product', 'product', $productId, null, $productData);
+
+        return $productId;
+    }
+
+    /**
+     * Генерация уникального SKU
+     *
+     * @return string
+     */
+    private function generateSku(): string
+    {
+        return 'PRD-' . strtoupper(substr(md5(uniqid()), 0, 8));
+    }
 }

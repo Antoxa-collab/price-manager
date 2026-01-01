@@ -53,7 +53,14 @@ const App = {
      * @param {number} duration - Длительность показа в мс
      */
     showToast(message, type = 'info', duration = 4000) {
-        const container = document.querySelector('.toast-container');
+        let container = document.querySelector('.toast-container');
+
+        // Создаём контейнер если его нет
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+            document.body.appendChild(container);
+        }
         const id = 'toast-' + Date.now();
 
         const icons = {

@@ -193,6 +193,15 @@ class Auth
     }
 
     /**
+     * Получение роли текущего пользователя
+     * @return string|null
+     */
+    public function getUserRole(): ?string
+    {
+        return $this->user['role'] ?? null;
+    }
+
+    /**
      * Требование авторизации
      * Редирект на страницу входа если не авторизован
      */

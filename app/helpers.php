@@ -83,14 +83,45 @@ function jsonResponse(mixed $data, int $statusCode = 200): never
 }
 
 /**
+ * Кэш для распарсенного JSON input
+ */
+$_jsonInputCache = null;
+
+/**
  * Получение значения из POST с валидацией
+ * Поддерживает как form-encoded, так и JSON данные
  * @param string $key Ключ параметра
  * @param mixed $default Значение по умолчанию
  * @return mixed
  */
 function post(string $key, mixed $default = null): mixed
 {
-    return $_POST[$key] ?? $default;
+    global $_jsonInputCache;
+
+    // Сначала проверяем $_POST (form-encoded)
+    if (isset($_POST[$key])) {
+        return $_POST[$key];
+    }
+
+    // Если $_POST пустой, пробуем JSON input
+    if (empty($_POST)) {
+        // Кэшируем распарсенный JSON для повторных вызовов
+        if ($_jsonInputCache === null) {
+            $rawInput = file_get_contents('php://input');
+            if (!empty($rawInput)) {
+                $decoded = json_decode($rawInput, true);
+                $_jsonInputCache = is_array($decoded) ? $decoded : [];
+            } else {
+                $_jsonInputCache = [];
+            }
+        }
+
+        if (isset($_jsonInputCache[$key])) {
+            return $_jsonInputCache[$key];
+        }
+    }
+
+    return $default;
 }
 
 /**

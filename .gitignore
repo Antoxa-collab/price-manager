@@ -1,0 +1,19 @@
+# Logs
+logs/*.log
+logs/app.log
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Dependencies (if using composer later)
+vendor/
+node_modules/

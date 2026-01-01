@@ -21,6 +21,7 @@ services:
     container_name: price-manager-php
     volumes:
       - ./:/var/www/html
+      - ./logs:/var/log/price-manager
     depends_on:
       - mysql
     networks:
@@ -36,7 +37,8 @@ services:
     container_name: price-manager-mysql
     ports:
       - "3306:3306"
-    volumes:
+    vo
+    lumes:
       - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
