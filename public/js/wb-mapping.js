@@ -11,7 +11,7 @@ const WBMapping = {
 
     // Выбранные элементы
     selectedOurProduct: null,
-    selectedWbProduct: null,
+    selectedWbProducts: new Set(), // Множественный выбор товаров WB
 
     // Текущий шаг (1, 2, 3)
     currentStep: 1,
@@ -370,6 +370,9 @@ const WBMapping = {
             return true;
         });
 
+        // Количество несопоставленных
+        const unmappedCount = filtered.filter(p => !p.is_mapped).length;
+
         document.getElementById('wbProductsCount').textContent = filtered.length;
 
         if (filtered.length === 0) {
@@ -383,7 +386,23 @@ const WBMapping = {
             return;
         }
 
-        list.innerHTML = filtered.map(product => {
+        // Заголовок с чекбоксом "Выбрать все" и счётчиком
+        const headerHtml = `
+            <div class="select-all-header d-flex justify-content-between align-items-center mb-2 p-2 bg-dark rounded border border-secondary">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="selectAllWb"
+                           ${unmappedCount === 0 ? 'disabled' : ''}>
+                    <label class="form-check-label small" for="selectAllWb">
+                        Выбрать все без связи (${unmappedCount})
+                    </label>
+                </div>
+                <span class="badge bg-primary" id="selectedWbCount">
+                    Выбрано: ${this.selectedWbProducts.size}
+                </span>
+            </div>
+        `;
+
+        const itemsHtml = filtered.map(product => {
             // Название товара WB (в кэше поле называется title)
             const wbProductName = product.title || product.name || '';
 
@@ -405,12 +424,20 @@ const WBMapping = {
                     </div>`;
             }
 
+            const isSelected = this.selectedWbProducts.has(String(product.nm_id));
+
             return `
-                <a href="#" class="list-group-item list-group-item-action bg-dark text-white border-secondary wb-product-item
-                    ${product.is_mapped ? 'mapped' : ''}"
+                <div class="list-group-item list-group-item-action bg-dark text-white border-secondary wb-product-item
+                    ${product.is_mapped ? 'mapped' : ''} ${isSelected ? 'selected' : ''}"
                    data-id="${product.nm_id}">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1 me-2" style="max-width: 75%;">
+                    <div class="d-flex align-items-start">
+                        <div class="form-check me-2 mt-1">
+                            <input class="form-check-input wb-product-checkbox" type="checkbox"
+                                   value="${product.nm_id}"
+                                   ${isSelected ? 'checked' : ''}
+                                   ${product.is_mapped ? 'disabled' : ''}>
+                        </div>
+                        <div class="flex-grow-1 me-2 wb-product-content" style="max-width: calc(100% - 100px);">
                             <div class="product-name-wrapper">
                                 <strong class="product-name-text text-truncate d-block">${App.escapeHtml(wbProductName)}</strong>
                                 <button type="button" class="btn-copy-name" title="Копировать название">
@@ -424,17 +451,112 @@ const WBMapping = {
                             <span class="badge bg-danger">${App.formatPrice(product.price || 0)}</span>
                         </div>
                     </div>
-                </a>
+                </div>
             `;
         }).join('');
 
-        // Привязываем события
-        list.querySelectorAll('.wb-product-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.preventDefault();
-                this.selectWbProduct(item.dataset.id);
+        list.innerHTML = headerHtml + itemsHtml;
+
+        // Привязываем события чекбоксов
+        this.bindWbCheckboxEvents();
+    },
+
+    /**
+     * Привязка событий чекбоксов товаров WB
+     */
+    bindWbCheckboxEvents() {
+        // Чекбокс "Выбрать все"
+        const selectAllCheckbox = document.getElementById('selectAllWb');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', (e) => {
+                this.toggleSelectAllWb(e.target.checked);
+            });
+        }
+
+        // Индивидуальные чекбоксы
+        document.querySelectorAll('.wb-product-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const productId = String(checkbox.value);
+                if (checkbox.checked) {
+                    this.selectedWbProducts.add(productId);
+                } else {
+                    this.selectedWbProducts.delete(productId);
+                }
+                this.updateWbSelectionUI();
             });
         });
+
+        // Клик на контент товара тоже переключает чекбокс
+        document.querySelectorAll('.wb-product-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                // Не реагируем если кликнули на чекбокс или кнопку копирования
+                if (e.target.closest('.form-check-input') || e.target.closest('.btn-copy-name')) return;
+
+                const checkbox = item.querySelector('.wb-product-checkbox');
+                if (checkbox && !checkbox.disabled) {
+                    checkbox.checked = !checkbox.checked;
+                    const productId = String(checkbox.value);
+                    if (checkbox.checked) {
+                        this.selectedWbProducts.add(productId);
+                    } else {
+                        this.selectedWbProducts.delete(productId);
+                    }
+                    this.updateWbSelectionUI();
+                }
+            });
+        });
+    },
+
+    /**
+     * Выбрать/снять все товары WB
+     */
+    toggleSelectAllWb(checked) {
+        const checkboxes = document.querySelectorAll('.wb-product-checkbox:not(:disabled)');
+
+        if (checked) {
+            checkboxes.forEach(cb => {
+                this.selectedWbProducts.add(String(cb.value));
+                cb.checked = true;
+            });
+        } else {
+            checkboxes.forEach(cb => {
+                this.selectedWbProducts.delete(String(cb.value));
+                cb.checked = false;
+            });
+        }
+
+        this.updateWbSelectionUI();
+    },
+
+    /**
+     * Обновление UI после изменения выбора товаров WB
+     */
+    updateWbSelectionUI() {
+        // Обновляем счётчик
+        const counter = document.getElementById('selectedWbCount');
+        if (counter) {
+            counter.textContent = `Выбрано: ${this.selectedWbProducts.size}`;
+        }
+
+        // Обновляем визуальное выделение строк
+        document.querySelectorAll('.wb-product-item').forEach(item => {
+            const productId = String(item.dataset.id);
+            item.classList.toggle('selected', this.selectedWbProducts.has(productId));
+        });
+
+        // Обновляем состояние "Выбрать все"
+        const selectAll = document.getElementById('selectAllWb');
+        if (selectAll) {
+            const allCheckboxes = document.querySelectorAll('.wb-product-checkbox:not(:disabled)');
+            const checkedCount = document.querySelectorAll('.wb-product-checkbox:checked').length;
+            selectAll.checked = allCheckboxes.length > 0 && checkedCount === allCheckboxes.length;
+            selectAll.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+        }
+
+        // Обновляем кнопку сопоставления
+        this.updateMappingButton();
+        this.updateSelectedInfo();
     },
 
     /**
@@ -523,32 +645,22 @@ const WBMapping = {
     },
 
     /**
-     * Выбор товара WB
-     */
-    selectWbProduct(id) {
-        this.selectedWbProduct = this.wbProducts.find(p => String(p.nm_id) === String(id)) || null;
-
-        document.querySelectorAll('.wb-product-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.id === id);
-        });
-
-        this.updateSelectedInfo();
-        this.updateMappingButton();
-    },
-
-    /**
      * Обновление информации о выбранных товарах
      */
     updateSelectedInfo() {
         const infoDiv = document.getElementById('selectedInfo');
         if (!infoDiv) return;
 
-        if (this.selectedOurProduct || this.selectedWbProduct) {
+        if (this.selectedOurProduct || this.selectedWbProducts.size > 0) {
             infoDiv.classList.remove('d-none');
             document.getElementById('selectedOurProduct').textContent =
                 this.selectedOurProduct ? this.selectedOurProduct.name : '-';
-            document.getElementById('selectedWbProduct').textContent =
-                this.selectedWbProduct ? (this.selectedWbProduct.title || this.selectedWbProduct.name || '-') : '-';
+
+            // Показываем количество выбранных товаров WB
+            const wbText = this.selectedWbProducts.size > 0
+                ? `${this.selectedWbProducts.size} товар(ов)`
+                : '-';
+            document.getElementById('selectedWbProduct').textContent = wbText;
         } else {
             infoDiv.classList.add('d-none');
         }
@@ -561,49 +673,78 @@ const WBMapping = {
         const btn = document.getElementById('createMappingBtn');
         if (!btn) return;
 
-        btn.disabled = !(
-            this.selectedOurProduct &&
-            this.selectedWbProduct &&
-            !this.selectedWbProduct.is_mapped
-        );
+        // Кнопка активна если выбран наш товар и хотя бы один товар WB
+        const canCreate = this.selectedOurProduct && this.selectedWbProducts.size > 0;
+        btn.disabled = !canCreate;
+
+        // Обновляем текст кнопки с количеством
+        if (this.selectedWbProducts.size > 1) {
+            btn.innerHTML = `<i class="bi bi-link-45deg me-1"></i> Сопоставить (${this.selectedWbProducts.size})`;
+        } else {
+            btn.innerHTML = `<i class="bi bi-link-45deg me-1"></i> Сопоставить`;
+        }
     },
 
     /**
-     * Создание сопоставления
+     * Создание сопоставления (массовое)
      */
     async createMapping() {
-        if (!this.selectedOurProduct || !this.selectedWbProduct) return;
+        if (!this.selectedOurProduct || this.selectedWbProducts.size === 0) return;
 
-        try {
-            const data = await App.fetch('/api/wb/mapping', {
-                method: 'POST',
-                body: {
-                    action: 'create',
-                    product_id: this.selectedOurProduct.id,
-                    nm_id: this.selectedWbProduct.nm_id
-                }
-            });
+        const btn = document.getElementById('createMappingBtn');
+        const originalBtnText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Сопоставление...';
 
-            App.showToast(data.message || 'Сопоставление создано', 'success');
+        let successCount = 0;
+        let errorCount = 0;
 
-            // Обновляем флаг сопоставления в локальных данных
-            const wbProduct = this.wbProducts.find(p =>
-                String(p.nm_id) === String(this.selectedWbProduct.nm_id)
-            );
-            if (wbProduct) {
+        // Сопоставляем каждый выбранный товар
+        for (const wbProductId of this.selectedWbProducts) {
+            const wbProduct = this.wbProducts.find(p => String(p.nm_id) === wbProductId);
+            if (!wbProduct) continue;
+
+            try {
+                await App.fetch('/api/wb/mapping', {
+                    method: 'POST',
+                    body: {
+                        action: 'create',
+                        product_id: this.selectedOurProduct.id,
+                        nm_id: wbProduct.nm_id
+                    }
+                });
+
+                // Обновляем флаг сопоставления в локальных данных
                 wbProduct.is_mapped = true;
+                wbProduct.our_product_name = this.selectedOurProduct.name;
+                successCount++;
+
+            } catch (error) {
+                console.error('Mapping error for', wbProductId, error);
+                errorCount++;
             }
-
-            // Перезагружаем сопоставления
-            await this.loadMappings();
-
-            // Сбрасываем выбор
-            this.clearSelections();
-            this.renderWbProducts();
-
-        } catch (error) {
-            App.showToast('Ошибка: ' + error.message, 'danger');
         }
+
+        // Показываем результат
+        if (successCount > 0) {
+            App.showToast(`Успешно сопоставлено: ${successCount} товар(ов)`, 'success');
+        }
+        if (errorCount > 0) {
+            App.showToast(`Ошибок: ${errorCount}`, 'danger');
+        }
+
+        // Перезагружаем сопоставления
+        await this.loadMappings();
+        await this.loadStatistics();
+
+        // Сбрасываем выбор и перерендериваем
+        this.selectedWbProducts.clear();
+        this.renderWbProducts();
+        this.updateMappingButton();
+        this.updateSelectedInfo();
+
+        btn.disabled = false;
+        btn.innerHTML = originalBtnText;
     },
 
     /**
@@ -636,11 +777,25 @@ const WBMapping = {
      */
     clearSelections() {
         this.selectedOurProduct = null;
-        this.selectedWbProduct = null;
+        this.selectedWbProducts.clear();
 
-        document.querySelectorAll('.our-product-item, .wb-product-item').forEach(item => {
+        document.querySelectorAll('.our-product-item').forEach(item => {
             item.classList.remove('active');
         });
+
+        document.querySelectorAll('.wb-product-item').forEach(item => {
+            item.classList.remove('active', 'selected');
+        });
+
+        document.querySelectorAll('.wb-product-checkbox').forEach(cb => {
+            cb.checked = false;
+        });
+
+        const selectAll = document.getElementById('selectAllWb');
+        if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        }
 
         this.updateSelectedInfo();
         this.updateMappingButton();

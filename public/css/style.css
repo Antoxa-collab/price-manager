@@ -1148,6 +1148,50 @@ th.sortable.sorted .sort-icon {
     line-height: 38px;
 }
 
+/* ==================== Множественный выбор товаров (маппинг) ==================== */
+
+/* Заголовок "Выбрать все" */
+.select-all-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #212529 !important;
+}
+
+/* Выбранный товар маркетплейса */
+.ozon-product-item.selected,
+.wb-product-item.selected {
+    background-color: rgba(25, 135, 84, 0.15) !important;
+    border-left: 3px solid #198754 !important;
+}
+
+/* Чекбокс в списке товаров */
+.ozon-product-item .form-check-input,
+.wb-product-item .form-check-input {
+    margin-top: 0;
+    cursor: pointer;
+}
+
+/* Заблокированный чекбокс для сопоставленных товаров */
+.ozon-product-item .form-check-input:disabled,
+.wb-product-item .form-check-input:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Кликабельный контент товара */
+.ozon-product-content,
+.wb-product-content {
+    cursor: pointer;
+}
+
+/* Счётчик выбранных */
+#selectedOzonCount,
+#selectedWbCount {
+    min-width: 100px;
+    text-align: center;
+}
+
 /* ==================== Print ==================== */
 
 @media print {

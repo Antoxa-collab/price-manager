@@ -11,7 +11,7 @@ const OzonMapping = {
 
     // Выбранные элементы
     selectedOurProduct: null,
-    selectedOzonProduct: null,
+    selectedOzonProducts: new Set(), // Множественный выбор товаров Ozon
 
     // Текущий шаг (1, 2, 3)
     currentStep: 1,
@@ -363,6 +363,9 @@ const OzonMapping = {
             return true;
         });
 
+        // Количество несопоставленных
+        const unmappedCount = filtered.filter(p => !p.is_mapped).length;
+
         document.getElementById('ozonProductsCount').textContent = filtered.length;
 
         if (filtered.length === 0) {
@@ -376,7 +379,23 @@ const OzonMapping = {
             return;
         }
 
-        list.innerHTML = filtered.map(product => {
+        // Заголовок с чекбоксом "Выбрать все" и счётчиком
+        const headerHtml = `
+            <div class="select-all-header d-flex justify-content-between align-items-center mb-2 p-2 bg-dark rounded border border-secondary">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="selectAllOzon"
+                           ${unmappedCount === 0 ? 'disabled' : ''}>
+                    <label class="form-check-label small" for="selectAllOzon">
+                        Выбрать все без связи (${unmappedCount})
+                    </label>
+                </div>
+                <span class="badge bg-primary" id="selectedOzonCount">
+                    Выбрано: ${this.selectedOzonProducts.size}
+                </span>
+            </div>
+        `;
+
+        const itemsHtml = filtered.map(product => {
             // Формируем бейдж сопоставления с названием товара
             let mappingBadge = '';
             if (product.is_mapped) {
@@ -389,12 +408,20 @@ const OzonMapping = {
                 </span>`;
             }
 
+            const isSelected = this.selectedOzonProducts.has(String(product.product_id));
+
             return `
-                <a href="#" class="list-group-item list-group-item-action bg-dark text-white border-secondary ozon-product-item
-                    ${product.is_mapped ? 'mapped' : ''}"
+                <div class="list-group-item list-group-item-action bg-dark text-white border-secondary ozon-product-item
+                    ${product.is_mapped ? 'mapped' : ''} ${isSelected ? 'selected' : ''}"
                    data-id="${product.product_id}">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1 me-2" style="max-width: 75%;">
+                    <div class="d-flex align-items-start">
+                        <div class="form-check me-2 mt-1">
+                            <input class="form-check-input ozon-product-checkbox" type="checkbox"
+                                   value="${product.product_id}"
+                                   ${isSelected ? 'checked' : ''}
+                                   ${product.is_mapped ? 'disabled' : ''}>
+                        </div>
+                        <div class="flex-grow-1 me-2 ozon-product-content" style="max-width: calc(100% - 100px);">
                             <div class="product-name-wrapper">
                                 <strong class="product-name-text text-truncate d-block">${App.escapeHtml(product.name || '')}</strong>
                                 <button type="button" class="btn-copy-name" title="Копировать название">
@@ -408,17 +435,112 @@ const OzonMapping = {
                             <span class="badge bg-info">${App.formatPrice(product.price || 0)}</span>
                         </div>
                     </div>
-                </a>
+                </div>
             `;
         }).join('');
 
-        // Привязываем события
-        list.querySelectorAll('.ozon-product-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.preventDefault();
-                this.selectOzonProduct(item.dataset.id);
+        list.innerHTML = headerHtml + itemsHtml;
+
+        // Привязываем события чекбоксов
+        this.bindOzonCheckboxEvents();
+    },
+
+    /**
+     * Привязка событий чекбоксов товаров Ozon
+     */
+    bindOzonCheckboxEvents() {
+        // Чекбокс "Выбрать все"
+        const selectAllCheckbox = document.getElementById('selectAllOzon');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', (e) => {
+                this.toggleSelectAllOzon(e.target.checked);
+            });
+        }
+
+        // Индивидуальные чекбоксы
+        document.querySelectorAll('.ozon-product-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const productId = String(checkbox.value);
+                if (checkbox.checked) {
+                    this.selectedOzonProducts.add(productId);
+                } else {
+                    this.selectedOzonProducts.delete(productId);
+                }
+                this.updateOzonSelectionUI();
             });
         });
+
+        // Клик на контент товара тоже переключает чекбокс
+        document.querySelectorAll('.ozon-product-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                // Не реагируем если кликнули на чекбокс или кнопку копирования
+                if (e.target.closest('.form-check-input') || e.target.closest('.btn-copy-name')) return;
+
+                const checkbox = item.querySelector('.ozon-product-checkbox');
+                if (checkbox && !checkbox.disabled) {
+                    checkbox.checked = !checkbox.checked;
+                    const productId = String(checkbox.value);
+                    if (checkbox.checked) {
+                        this.selectedOzonProducts.add(productId);
+                    } else {
+                        this.selectedOzonProducts.delete(productId);
+                    }
+                    this.updateOzonSelectionUI();
+                }
+            });
+        });
+    },
+
+    /**
+     * Выбрать/снять все товары Ozon
+     */
+    toggleSelectAllOzon(checked) {
+        const checkboxes = document.querySelectorAll('.ozon-product-checkbox:not(:disabled)');
+
+        if (checked) {
+            checkboxes.forEach(cb => {
+                this.selectedOzonProducts.add(String(cb.value));
+                cb.checked = true;
+            });
+        } else {
+            checkboxes.forEach(cb => {
+                this.selectedOzonProducts.delete(String(cb.value));
+                cb.checked = false;
+            });
+        }
+
+        this.updateOzonSelectionUI();
+    },
+
+    /**
+     * Обновление UI после изменения выбора товаров Ozon
+     */
+    updateOzonSelectionUI() {
+        // Обновляем счётчик
+        const counter = document.getElementById('selectedOzonCount');
+        if (counter) {
+            counter.textContent = `Выбрано: ${this.selectedOzonProducts.size}`;
+        }
+
+        // Обновляем визуальное выделение строк
+        document.querySelectorAll('.ozon-product-item').forEach(item => {
+            const productId = String(item.dataset.id);
+            item.classList.toggle('selected', this.selectedOzonProducts.has(productId));
+        });
+
+        // Обновляем состояние "Выбрать все"
+        const selectAll = document.getElementById('selectAllOzon');
+        if (selectAll) {
+            const allCheckboxes = document.querySelectorAll('.ozon-product-checkbox:not(:disabled)');
+            const checkedCount = document.querySelectorAll('.ozon-product-checkbox:checked').length;
+            selectAll.checked = allCheckboxes.length > 0 && checkedCount === allCheckboxes.length;
+            selectAll.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+        }
+
+        // Обновляем кнопку сопоставления
+        this.updateMappingButton();
+        this.updateSelectedInfo();
     },
 
     /**
@@ -506,20 +628,6 @@ const OzonMapping = {
         this.updateMappingButton();
     },
 
-    /**
-     * Выбор товара Ozon
-     */
-    selectOzonProduct(id) {
-        this.selectedOzonProduct = this.ozonProducts.find(p => String(p.product_id) === String(id)) || null;
-
-        // Обновляем визуальное выделение
-        document.querySelectorAll('.ozon-product-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.id === id);
-        });
-
-        this.updateSelectedInfo();
-        this.updateMappingButton();
-    },
 
     /**
      * Обновление информации о выбранных товарах
@@ -528,12 +636,16 @@ const OzonMapping = {
         const infoDiv = document.getElementById('selectedInfo');
         if (!infoDiv) return;
 
-        if (this.selectedOurProduct || this.selectedOzonProduct) {
+        if (this.selectedOurProduct || this.selectedOzonProducts.size > 0) {
             infoDiv.classList.remove('d-none');
             document.getElementById('selectedOurProduct').textContent =
                 this.selectedOurProduct ? this.selectedOurProduct.name : '-';
-            document.getElementById('selectedOzonProduct').textContent =
-                this.selectedOzonProduct ? this.selectedOzonProduct.name : '-';
+
+            // Показываем количество выбранных товаров Ozon
+            const ozonText = this.selectedOzonProducts.size > 0
+                ? `${this.selectedOzonProducts.size} товар(ов)`
+                : '-';
+            document.getElementById('selectedOzonProduct').textContent = ozonText;
         } else {
             infoDiv.classList.add('d-none');
         }
@@ -546,52 +658,80 @@ const OzonMapping = {
         const btn = document.getElementById('createMappingBtn');
         if (!btn) return;
 
-        // Кнопка активна если выбраны оба товара и Ozon товар не сопоставлен
-        btn.disabled = !(
-            this.selectedOurProduct &&
-            this.selectedOzonProduct &&
-            !this.selectedOzonProduct.is_mapped
-        );
+        // Кнопка активна если выбран наш товар и хотя бы один товар Ozon
+        const canCreate = this.selectedOurProduct && this.selectedOzonProducts.size > 0;
+        btn.disabled = !canCreate;
+
+        // Обновляем текст кнопки с количеством
+        if (this.selectedOzonProducts.size > 1) {
+            btn.innerHTML = `<i class="bi bi-link-45deg me-1"></i> Сопоставить (${this.selectedOzonProducts.size})`;
+        } else {
+            btn.innerHTML = `<i class="bi bi-link-45deg me-1"></i> Сопоставить`;
+        }
     },
 
     /**
-     * Создание сопоставления
+     * Создание сопоставления (массовое)
      */
     async createMapping() {
-        if (!this.selectedOurProduct || !this.selectedOzonProduct) return;
+        if (!this.selectedOurProduct || this.selectedOzonProducts.size === 0) return;
 
-        try {
-            const data = await App.fetch('/api/ozon/create-mapping', {
-                method: 'POST',
-                body: {
-                    product_id: this.selectedOurProduct.id,
-                    marketplace_product_id: this.selectedOzonProduct.product_id,
-                    marketplace_sku: this.selectedOzonProduct.sku,
-                    marketplace_offer_id: this.selectedOzonProduct.offer_id,
-                    marketplace_name: this.selectedOzonProduct.name
-                }
-            });
+        const btn = document.getElementById('createMappingBtn');
+        const originalBtnText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Сопоставление...';
 
-            App.showToast(data.message || 'Сопоставление создано', 'success');
+        let successCount = 0;
+        let errorCount = 0;
 
-            // Обновляем флаг сопоставления в локальных данных
-            const ozonProduct = this.ozonProducts.find(p =>
-                String(p.product_id) === String(this.selectedOzonProduct.product_id)
-            );
-            if (ozonProduct) {
+        // Сопоставляем каждый выбранный товар
+        for (const ozonProductId of this.selectedOzonProducts) {
+            const ozonProduct = this.ozonProducts.find(p => String(p.product_id) === ozonProductId);
+            if (!ozonProduct) continue;
+
+            try {
+                await App.fetch('/api/ozon/create-mapping', {
+                    method: 'POST',
+                    body: {
+                        product_id: this.selectedOurProduct.id,
+                        marketplace_product_id: ozonProduct.product_id,
+                        marketplace_sku: ozonProduct.sku,
+                        marketplace_offer_id: ozonProduct.offer_id,
+                        marketplace_name: ozonProduct.name
+                    }
+                });
+
+                // Обновляем флаг сопоставления в локальных данных
                 ozonProduct.is_mapped = true;
+                ozonProduct.our_product_name = this.selectedOurProduct.name;
+                successCount++;
+
+            } catch (error) {
+                console.error('Mapping error for', ozonProductId, error);
+                errorCount++;
             }
-
-            // Перезагружаем сопоставления
-            await this.loadMappings();
-
-            // Сбрасываем выбор
-            this.clearSelections();
-            this.renderOzonProducts();
-
-        } catch (error) {
-            App.showToast('Ошибка: ' + error.message, 'danger');
         }
+
+        // Показываем результат
+        if (successCount > 0) {
+            App.showToast(`Успешно сопоставлено: ${successCount} товар(ов)`, 'success');
+        }
+        if (errorCount > 0) {
+            App.showToast(`Ошибок: ${errorCount}`, 'danger');
+        }
+
+        // Перезагружаем сопоставления
+        await this.loadMappings();
+        await this.loadStatistics();
+
+        // Сбрасываем выбор и перерендериваем
+        this.selectedOzonProducts.clear();
+        this.renderOzonProducts();
+        this.updateMappingButton();
+        this.updateSelectedInfo();
+
+        btn.disabled = false;
+        btn.innerHTML = originalBtnText;
     },
 
     /**
@@ -624,11 +764,25 @@ const OzonMapping = {
      */
     clearSelections() {
         this.selectedOurProduct = null;
-        this.selectedOzonProduct = null;
+        this.selectedOzonProducts.clear();
 
-        document.querySelectorAll('.our-product-item, .ozon-product-item').forEach(item => {
+        document.querySelectorAll('.our-product-item').forEach(item => {
             item.classList.remove('active');
         });
+
+        document.querySelectorAll('.ozon-product-item').forEach(item => {
+            item.classList.remove('active', 'selected');
+        });
+
+        document.querySelectorAll('.ozon-product-checkbox').forEach(cb => {
+            cb.checked = false;
+        });
+
+        const selectAll = document.getElementById('selectAllOzon');
+        if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        }
 
         this.updateSelectedInfo();
         this.updateMappingButton();
