@@ -301,7 +301,12 @@ const OzonMapping = {
                    data-id="${product.id}">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1 me-2">
-                            <strong>${App.escapeHtml(product.name || '')}</strong>
+                            <div class="product-name-wrapper">
+                                <strong class="product-name-text">${App.escapeHtml(product.name || '')}</strong>
+                                <button type="button" class="btn-copy-name" title="Копировать название">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
                             <div class="small text-muted">
                                 ${App.escapeHtml(product.sku || '')}
                                 ${product.grade ? ` | Сорт: ${App.escapeHtml(product.grade)}` : ''}
@@ -390,7 +395,12 @@ const OzonMapping = {
                    data-id="${product.product_id}">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1 me-2" style="max-width: 75%;">
-                            <strong class="text-truncate d-block">${App.escapeHtml(product.name || '')}</strong>
+                            <div class="product-name-wrapper">
+                                <strong class="product-name-text text-truncate d-block">${App.escapeHtml(product.name || '')}</strong>
+                                <button type="button" class="btn-copy-name" title="Копировать название">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
                             <div class="small text-muted">${App.escapeHtml(product.offer_id || product.sku || '')}</div>
                             ${mappingBadge}
                         </div>

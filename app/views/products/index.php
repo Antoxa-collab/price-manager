@@ -36,24 +36,51 @@ $products = $db->fetchAll("
     </div>
 </div>
 
+<!-- Панель поиска -->
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="input-group">
+            <span class="input-group-text bg-dark border-secondary"><i class="bi bi-search text-muted"></i></span>
+            <input type="text"
+                   id="productSearch"
+                   class="form-control bg-dark text-white border-secondary"
+                   placeholder="Поиск по названию или артикулу...">
+            <button class="btn btn-outline-secondary" type="button" id="clearSearch" title="Очистить">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    </div>
+    <div class="col-md-6 text-end d-flex align-items-center justify-content-end">
+        <span class="text-muted" id="productsCount">Найдено: <strong><?= count($products) ?></strong> товаров</span>
+    </div>
+</div>
+
 <!-- Таблица товаров -->
 <div class="card bg-dark border-secondary">
     <div class="card-header border-secondary">
         <i class="bi bi-list-ul me-2"></i>
         Список товаров
-        <span class="badge bg-secondary ms-2"><?= count($products) ?></span>
+        <span class="badge bg-secondary ms-2" id="totalProductsBadge"><?= count($products) ?></span>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-dark table-striped table-hover mb-0">
+            <table class="table table-dark table-striped table-hover mb-0" id="productsTableMain">
                 <thead>
                     <tr>
-                        <th>Название</th>
-                        <th>Артикул</th>
-                        <th class="text-end" style="width: 150px;">Закупочная цена</th>
+                        <th class="sortable" data-sort="name" data-type="string">
+                            Название <i class="bi bi-arrow-down-up sort-icon"></i>
+                        </th>
+                        <th class="sortable" data-sort="sku" data-type="string">
+                            Артикул <i class="bi bi-arrow-down-up sort-icon"></i>
+                        </th>
+                        <th class="text-end sortable" data-sort="cost_price" data-type="number" style="width: 150px;">
+                            Закупочная цена <i class="bi bi-arrow-down-up sort-icon"></i>
+                        </th>
                         <th class="text-center" style="width: 100px;">Наценка мин.</th>
                         <th class="text-center" style="width: 100px;">Наценка доп.</th>
-                        <th class="text-center" style="width: 100px;">Сопоставлений</th>
+                        <th class="text-center sortable" data-sort="mappings" data-type="number" style="width: 100px;">
+                            Сопоставлений <i class="bi bi-arrow-down-up sort-icon"></i>
+                        </th>
                         <th class="text-center" style="width: 150px;">Действия</th>
                     </tr>
                 </thead>
@@ -67,7 +94,12 @@ $products = $db->fetchAll("
                     </tr>
                     <?php else: ?>
                     <?php foreach ($products as $product): ?>
-                    <tr data-id="<?= $product['id'] ?>">
+                    <tr data-id="<?= $product['id'] ?>"
+                        data-name="<?= e($product['name']) ?>"
+                        data-sku="<?= e($product['sku'] ?? '') ?>"
+                        data-category="<?= e($product['category'] ?? '') ?>"
+                        data-cost-price="<?= $product['cost_price'] ?? 0 ?>"
+                        data-mappings="<?= $product['mappings_count'] ?? 0 ?>">
                         <td>
                             <strong><?= e($product['name']) ?></strong>
                             <?php if (!empty($product['category'])): ?>

@@ -15,6 +15,80 @@ const App = {
         this.initAutoHideAlerts();
         this.initMobileMenu();
         this.initResponsiveTables();
+        this.initCopyButtons();
+    },
+
+    /**
+     * Инициализация кнопок копирования названий товаров (делегирование событий)
+     */
+    initCopyButtons() {
+        const self = this;
+        document.addEventListener('click', function(e) {
+            const copyBtn = e.target.closest('.btn-copy-name');
+            if (!copyBtn) return;
+
+            e.stopPropagation();
+            e.preventDefault();
+
+            const wrapper = copyBtn.closest('.product-name-wrapper');
+            const textElement = wrapper ? wrapper.querySelector('.product-name-text') : null;
+            const text = textElement ? textElement.textContent.trim() : '';
+
+            if (!text) {
+                console.error('Текст для копирования не найден');
+                return;
+            }
+
+            // Копируем в буфер
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    self.showCopySuccess(copyBtn);
+                    const shortText = text.length > 40 ? text.substring(0, 40) + '...' : text;
+                    self.showToast('Скопировано: ' + shortText, 'success', 2000);
+                }).catch(err => {
+                    console.error('Ошибка копирования:', err);
+                    self.fallbackCopyWithButton(text, copyBtn);
+                });
+            } else {
+                self.fallbackCopyWithButton(text, copyBtn);
+            }
+        });
+    },
+
+    /**
+     * Визуальная обратная связь при успешном копировании
+     */
+    showCopySuccess(button) {
+        button.classList.add('copied');
+        const icon = button.querySelector('i');
+        if (icon) icon.className = 'bi bi-clipboard-check';
+
+        setTimeout(() => {
+            button.classList.remove('copied');
+            if (icon) icon.className = 'bi bi-clipboard';
+        }, 2000);
+    },
+
+    /**
+     * Fallback копирование с визуальной обратной связью
+     */
+    fallbackCopyWithButton(text, button) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+
+        try {
+            document.execCommand('copy');
+            this.showCopySuccess(button);
+            this.showToast('Скопировано!', 'success', 2000);
+        } catch (err) {
+            console.error('Fallback копирование не удалось:', err);
+            this.showToast('Не удалось скопировать', 'danger');
+        }
+
+        document.body.removeChild(textarea);
     },
 
     /**
@@ -424,6 +498,72 @@ const App = {
             console.error('Copy failed:', err);
             this.showToast('Не удалось скопировать', 'danger');
         }
+    },
+
+    /**
+     * Копирование названия товара (для кнопки в карточке)
+     * @param {Event} event - Событие клика
+     * @param {HTMLElement} button - Кнопка копирования
+     */
+    copyProductName(event, button) {
+        // Останавливаем всплытие чтобы не выбрать товар
+        event.stopPropagation();
+        event.preventDefault();
+
+        // Находим текст названия
+        const nameText = button.closest('.product-name-wrapper')?.querySelector('.product-name-text');
+        const text = nameText ? nameText.textContent.trim() : '';
+
+        if (!text) return;
+
+        // Копируем в буфер
+        navigator.clipboard.writeText(text).then(() => {
+            // Показываем что скопировано
+            button.classList.add('copied');
+            const icon = button.querySelector('i');
+            if (icon) {
+                icon.className = 'bi bi-clipboard-check';
+            }
+
+            // Возвращаем исходный вид через 2 секунды
+            setTimeout(() => {
+                button.classList.remove('copied');
+                if (icon) {
+                    icon.className = 'bi bi-clipboard';
+                }
+            }, 2000);
+
+            // Показываем короткое уведомление
+            const shortText = text.length > 40 ? text.substring(0, 40) + '...' : text;
+            this.showToast(`Скопировано: ${shortText}`, 'success', 2000);
+        }).catch(err => {
+            console.error('Ошибка копирования:', err);
+            // Fallback для старых браузеров
+            this.fallbackCopyText(text);
+        });
+    },
+
+    /**
+     * Fallback копирование для старых браузеров
+     * @param {string} text - Текст для копирования
+     */
+    fallbackCopyText(text) {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+
+        try {
+            document.execCommand('copy');
+            this.showToast('Скопировано!', 'success', 2000);
+        } catch (err) {
+            console.error('Fallback копирование не удалось:', err);
+            this.showToast('Не удалось скопировать', 'danger');
+        }
+
+        document.body.removeChild(textArea);
     }
 };
 

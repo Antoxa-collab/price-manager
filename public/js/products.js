@@ -3,11 +3,16 @@
  */
 
 const ProductsPage = {
+    // Текущая сортировка
+    currentSort: { field: 'name', direction: 'asc' },
+
     /**
      * Инициализация страницы
      */
     init() {
         this.bindEvents();
+        this.initSearch();
+        this.initSort();
     },
 
     /**
@@ -304,6 +309,213 @@ const ProductsPage = {
         if (badge) {
             badge.textContent = count;
         }
+        // Обновляем также счётчик найденных
+        this.updateFoundCount(count);
+    },
+
+    // ==================== ПОИСК ====================
+
+    /**
+     * Инициализация поиска
+     */
+    initSearch() {
+        const searchInput = document.getElementById('productSearch');
+        const clearBtn = document.getElementById('clearSearch');
+
+        if (!searchInput) return;
+
+        // Поиск при вводе (с debounce)
+        let searchTimeout;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                this.filterProducts(searchInput.value);
+            }, 200);
+        });
+
+        // Очистка поиска
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                this.filterProducts('');
+                searchInput.focus();
+            });
+        }
+
+        // Enter для поиска
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                this.filterProducts('');
+            }
+        });
+    },
+
+    /**
+     * Фильтрация товаров по поисковому запросу
+     */
+    filterProducts(query) {
+        const rows = document.querySelectorAll('#productsTable tr[data-id]');
+        query = query.toLowerCase().trim();
+
+        let visibleCount = 0;
+
+        rows.forEach(row => {
+            const name = (row.dataset.name || '').toLowerCase();
+            const sku = (row.dataset.sku || '').toLowerCase();
+            const category = (row.dataset.category || '').toLowerCase();
+
+            const matches = !query ||
+                name.includes(query) ||
+                sku.includes(query) ||
+                category.includes(query);
+
+            if (matches) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        this.updateFoundCount(visibleCount);
+
+        // Показываем сообщение если ничего не найдено
+        this.showEmptyState(visibleCount === 0 && query);
+    },
+
+    /**
+     * Обновление счётчика найденных товаров
+     */
+    updateFoundCount(count) {
+        const counter = document.querySelector('#productsCount strong');
+        if (counter) {
+            counter.textContent = count;
+        }
+    },
+
+    /**
+     * Показать/скрыть сообщение "ничего не найдено"
+     */
+    showEmptyState(show) {
+        const tbody = document.getElementById('productsTable');
+        let emptyRow = document.getElementById('noProductsFound');
+
+        if (show) {
+            if (!emptyRow) {
+                emptyRow = document.createElement('tr');
+                emptyRow.id = 'noProductsFound';
+                emptyRow.innerHTML = `
+                    <td colspan="7" class="text-center text-muted py-4">
+                        <i class="bi bi-search fs-2 d-block mb-2"></i>
+                        Товары не найдены
+                    </td>
+                `;
+                tbody.appendChild(emptyRow);
+            }
+            emptyRow.style.display = '';
+        } else if (emptyRow) {
+            emptyRow.style.display = 'none';
+        }
+    },
+
+    // ==================== СОРТИРОВКА ====================
+
+    /**
+     * Инициализация сортировки
+     */
+    initSort() {
+        const headers = document.querySelectorAll('th.sortable');
+
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const field = header.dataset.sort;
+                const type = header.dataset.type || 'string';
+
+                // Переключаем направление если то же поле
+                if (this.currentSort.field === field) {
+                    this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this.currentSort.field = field;
+                    this.currentSort.direction = 'asc';
+                }
+
+                // Сортируем
+                this.sortProducts(field, type, this.currentSort.direction);
+
+                // Обновляем иконки
+                this.updateSortIcons(field, this.currentSort.direction);
+            });
+        });
+    },
+
+    /**
+     * Сортировка товаров
+     */
+    sortProducts(field, type, direction) {
+        const tbody = document.getElementById('productsTable');
+        const rows = Array.from(tbody.querySelectorAll('tr[data-id]'));
+
+        rows.sort((a, b) => {
+            let valA, valB;
+
+            // Получаем значения из data-атрибутов
+            switch (field) {
+                case 'name':
+                    valA = a.dataset.name || '';
+                    valB = b.dataset.name || '';
+                    break;
+                case 'sku':
+                    valA = a.dataset.sku || '';
+                    valB = b.dataset.sku || '';
+                    break;
+                case 'cost_price':
+                    valA = parseFloat(a.dataset.costPrice) || 0;
+                    valB = parseFloat(b.dataset.costPrice) || 0;
+                    break;
+                case 'mappings':
+                    valA = parseInt(a.dataset.mappings) || 0;
+                    valB = parseInt(b.dataset.mappings) || 0;
+                    break;
+                default:
+                    valA = '';
+                    valB = '';
+            }
+
+            // Сравнение
+            if (type === 'number') {
+                return direction === 'asc' ? valA - valB : valB - valA;
+            } else {
+                valA = valA.toString().toLowerCase();
+                valB = valB.toString().toLowerCase();
+                if (valA < valB) return direction === 'asc' ? -1 : 1;
+                if (valA > valB) return direction === 'asc' ? 1 : -1;
+                return 0;
+            }
+        });
+
+        // Перестраиваем таблицу
+        rows.forEach(row => tbody.appendChild(row));
+    },
+
+    /**
+     * Обновление иконок сортировки
+     */
+    updateSortIcons(activeField, direction) {
+        document.querySelectorAll('th.sortable').forEach(th => {
+            const icon = th.querySelector('.sort-icon');
+            if (!icon) return;
+
+            if (th.dataset.sort === activeField) {
+                icon.className = direction === 'asc'
+                    ? 'bi bi-sort-up sort-icon'
+                    : 'bi bi-sort-down sort-icon';
+                th.classList.add('sorted');
+            } else {
+                icon.className = 'bi bi-arrow-down-up sort-icon';
+                th.classList.remove('sorted');
+            }
+        });
     }
 };
 
