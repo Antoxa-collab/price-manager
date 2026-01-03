@@ -112,6 +112,10 @@ $products = $db->fetchAll("
                             <?php endif; ?>
                         </td>
                         <td class="text-center">
+                            <button class="btn btn-sm btn-outline-warning edit-product-btn"
+                                    data-id="<?= $product['id'] ?>" title="Редактировать">
+                                <i class="bi bi-pencil"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-success save-product-btn"
                                     data-id="<?= $product['id'] ?>" title="Сохранить">
                                 <i class="bi bi-check-lg"></i>
@@ -179,6 +183,59 @@ $products = $db->fetchAll("
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
                 <button type="button" class="btn btn-primary" id="saveNewProductBtn">
                     <i class="bi bi-check-lg me-1"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно редактирования товара -->
+<div class="modal fade" id="editProductModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-pencil-square me-2"></i>
+                    Редактировать товар
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editProductId">
+                <div class="mb-3">
+                    <label class="form-label">Название <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="editProductName" placeholder="Например: Фанера ФК 1520x1520 4мм">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Артикул (SKU)</label>
+                    <input type="text" class="form-control" id="editProductSku" placeholder="Например: FAN-FK-1520-4">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Категория</label>
+                    <input type="text" class="form-control" id="editProductCategory" placeholder="Например: Фанера">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Закупочная цена (₽) <span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="editProductCost" step="0.01" min="0" value="0">
+                    <div class="form-text">Цена закупки за 1 единицу (лист, штуку)</div>
+                </div>
+                <div class="row">
+                    <div class="col-6">
+                        <label class="form-label">Наценка мин. (%)</label>
+                        <input type="number" class="form-control" id="editProductMarkupMin" value="20" step="0.1" min="0">
+                        <div class="form-text">Для минимальной цены</div>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Наценка доп. (%)</label>
+                        <input type="number" class="form-control" id="editProductMarkupYour" value="5" step="0.1" min="0">
+                        <div class="form-text">Поверх минимальной</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-warning" id="updateProductBtn">
+                    <i class="bi bi-check-lg me-1"></i> Сохранить изменения
                 </button>
             </div>
         </div>

@@ -2,6 +2,9 @@
  * Price Manager - Общие функции приложения
  */
 
+// CSRF токен для API запросов (получаем из мета-тега)
+window.csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
 const App = {
     /**
      * Инициализация приложения
@@ -10,6 +13,8 @@ const App = {
         this.initTooltips();
         this.initToastContainer();
         this.initAutoHideAlerts();
+        this.initMobileMenu();
+        this.initResponsiveTables();
     },
 
     /**
@@ -44,6 +49,111 @@ const App = {
                 }
             }, 5000);
         });
+    },
+
+    /**
+     * Инициализация мобильного меню
+     */
+    initMobileMenu() {
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        if (!sidebar || !sidebarToggle || !sidebarOverlay) {
+            return;
+        }
+
+        // Toggle sidebar on hamburger click
+        sidebarToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleSidebar();
+        });
+
+        // Close sidebar on overlay click
+        sidebarOverlay.addEventListener('click', () => {
+            this.closeSidebar();
+        });
+
+        // Close sidebar when clicking a link (on mobile)
+        sidebar.querySelectorAll('a.nav-link').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth < 768) {
+                    this.closeSidebar();
+                }
+            });
+        });
+
+        // Close sidebar on escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && sidebar.classList.contains('show')) {
+                this.closeSidebar();
+            }
+        });
+
+        // Handle resize - close sidebar when switching to desktop
+        window.addEventListener('resize', this.debounce(() => {
+            if (window.innerWidth >= 768) {
+                this.closeSidebar();
+            }
+        }, 250));
+    },
+
+    /**
+     * Toggle sidebar visibility
+     */
+    toggleSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        if (sidebar && sidebarOverlay) {
+            sidebar.classList.toggle('show');
+            sidebarOverlay.classList.toggle('show');
+            document.body.classList.toggle('sidebar-open');
+        }
+    },
+
+    /**
+     * Close sidebar
+     */
+    closeSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        if (sidebar && sidebarOverlay) {
+            sidebar.classList.remove('show');
+            sidebarOverlay.classList.remove('show');
+            document.body.classList.remove('sidebar-open');
+        }
+    },
+
+    /**
+     * Initialize responsive tables for mobile
+     * Adds data-label attributes for card view on mobile
+     */
+    initResponsiveTables() {
+        const tables = document.querySelectorAll('table.table');
+        tables.forEach(table => {
+            const headers = table.querySelectorAll('thead th');
+            const headerLabels = Array.from(headers).map(th => th.textContent.trim());
+
+            table.querySelectorAll('tbody tr').forEach(row => {
+                row.querySelectorAll('td').forEach((cell, index) => {
+                    if (headerLabels[index]) {
+                        cell.setAttribute('data-label', headerLabels[index]);
+                    }
+                });
+            });
+
+            // Add mobile-cards class for styling
+            table.classList.add('mobile-cards');
+        });
+    },
+
+    /**
+     * Check if device is mobile
+     */
+    isMobile() {
+        return window.innerWidth < 768;
     },
 
     /**
@@ -175,7 +285,8 @@ const App = {
             method: 'GET',
             headers: {
                 'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': window.csrfToken
             }
         };
 

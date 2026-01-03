@@ -24,21 +24,34 @@ services:
       - ./logs:/var/log/price-manager
     depends_on:
       - mysql
+      - shadowsocks
     networks:
       - price-manager-network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       DB_HOST: mysql
       DB_DATABASE: price_manager
       DB_USERNAME: price_user
       DB_PASSWORD: price_password
+      CLAUDE_PROXY: socks5://shadowsocks:1080
+
+  shadowsocks:
+    image: shadowsocks/shadowsocks-libev:latest
+    container_name: price-manager-shadowsocks
+    restart: unless-stopped
+    command: ss-local -s ${SS_SERVER:-213.111.181.182} -p ${SS_PORT:-443} -l 1080 -b 0.0.0.0 -k ${SS_PASSWORD:-changeme} -m chacha20-ietf-poly1305
+    networks:
+      - price-manager-network
 
   mysql:
     image: mysql:8.0
     container_name: price-manager-mysql
     ports:
-      - "3306:3306"
-    vo
-    lumes:
+      - "127.0.0.1:3306:3306"
+    volumes:
       - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql

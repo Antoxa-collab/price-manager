@@ -164,6 +164,18 @@ body {
     color: #fff;
 }
 
+/* Стили для option в select - браузеры не поддерживают прозрачный фон */
+.form-select option {
+    background-color: #212529;
+    color: #fff;
+}
+
+.form-select option:checked,
+.form-select option:hover {
+    background-color: #0d6efd;
+    color: #fff;
+}
+
 .form-control:focus,
 .form-select:focus {
     background-color: rgba(255, 255, 255, 0.1);
@@ -513,14 +525,13 @@ body {
     color: #0dcaf0;
 }
 
-/* ==================== Таблица артикулов ==================== */
+/* ==================== Таблица артикулов — УБРАНЫ яркие цвета ==================== */
 
-.article-row-changed {
-    background-color: rgba(255, 193, 7, 0.1) !important;
-}
-
+/* Отключаем яркие цвета строк по статусу */
+.article-row-changed,
 .table-warning {
-    --bs-table-bg: rgba(255, 193, 7, 0.1) !important;
+    background: inherit !important;
+    --bs-table-bg: transparent !important;
 }
 
 /* ==================== Модальные окна ==================== */
@@ -642,19 +653,24 @@ body {
 .metric-card.metric-min .metric-value { color: #fbbf24; }
 .metric-card.metric-your .metric-value { color: #34d399; }
 
-/* Таблица калькулятора - современный вид */
+/* ============================================
+   ТАБЛИЦА КАЛЬКУЛЯТОРА — ПОЛНАЯ ПЕРЕРАБОТКА
+   Гармоничные тёмные тона, без ярких конфликтов
+   ============================================ */
+
 .ozon-calculator-table {
     border-collapse: separate;
     border-spacing: 0;
     font-size: 0.875rem;
 }
 
+/* Заголовок таблицы */
 .ozon-calculator-table thead th {
-    background: linear-gradient(180deg, #2d3748 0%, #1a202c 100%);
-    color: #e2e8f0;
+    background: #0f172a !important;
+    color: #94a3b8;
     font-weight: 600;
-    padding: 12px 8px;
-    border-bottom: 2px solid #4a5568;
+    padding: 14px 10px;
+    border-bottom: 2px solid #334155;
     position: sticky;
     top: 0;
     z-index: 10;
@@ -663,25 +679,64 @@ body {
     letter-spacing: 0.5px;
 }
 
-.ozon-calculator-table tbody tr {
-    background: #1e2533;
-    transition: all 0.15s ease;
-    border-bottom: 1px solid #2d3748;
+/* === СТРОКИ — Мягкая зебра === */
+.ozon-calculator-table tbody tr,
+#articlesTableBody tr {
+    background: #1a1f2e !important;
+    transition: all 0.2s ease;
+    cursor: pointer;
 }
 
-.ozon-calculator-table tbody tr:hover {
-    background: #2a3441;
+.ozon-calculator-table tbody tr:nth-child(even),
+#articlesTableBody tr:nth-child(even) {
+    background: #1e2538 !important;
 }
 
-.ozon-calculator-table tbody tr.selected {
-    background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.05) 100%);
-    border-left: 3px solid #3b82f6;
+/* Сброс любых ярких цветов Bootstrap */
+.ozon-calculator-table tbody tr.table-warning,
+.ozon-calculator-table tbody tr.table-danger,
+.ozon-calculator-table tbody tr[class*="bg-"],
+#articlesTableBody tr.table-warning,
+#articlesTableBody tr.table-danger,
+#articlesTableBody tr[class*="bg-"] {
+    background: inherit !important;
 }
 
+/* === HOVER — Строка СВЕТЛЕЕ и заметнее === */
+.ozon-calculator-table tbody tr:hover,
+#articlesTableBody tr:hover {
+    background: linear-gradient(90deg, #3d4f6f 0%, #4a5f7f 50%, #3d4f6f 100%) !important;
+    transform: scale(1.015);
+    box-shadow:
+        0 8px 25px rgba(59, 130, 246, 0.4),
+        0 0 0 2px rgba(96, 165, 250, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    z-index: 100;
+    position: relative;
+    border-radius: 8px;
+}
+
+/* Ячейки при наведении — увеличенный отступ */
+.ozon-calculator-table tbody tr:hover td,
+#articlesTableBody tr:hover td {
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+    color: #ffffff !important;
+}
+
+/* Текст артикула при наведении — акцент */
+.ozon-calculator-table tbody tr:hover td:nth-child(2),
+#articlesTableBody tr:hover td:nth-child(2) {
+    color: #93c5fd !important;
+    font-weight: 600;
+}
+
+/* === ЯЧЕЙКИ === */
 .ozon-calculator-table td {
-    padding: 10px 8px;
+    padding: 12px 10px;
     vertical-align: middle;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid #2d3748;
+    transition: all 0.2s ease;
 }
 
 /* Артикул - моноширинный шрифт */
@@ -689,20 +744,49 @@ body {
 .ozon-calculator-table td:nth-child(2) {
     font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 0.8rem;
-    color: #60a5fa;
+    color: #7dd3fc;
 }
 
-/* Цены в таблице */
-.ozon-calculator-table .price-cell-min {
-    color: #fbbf24 !important;
+/* === ЦЕНЫ — Гармоничные приглушённые тона === */
+
+/* Минимальная цена — тёплый жёлтый */
+.ozon-calculator-table .price-cell-min,
+#articlesTableBody td:nth-child(5) {
+    color: #f0b429 !important;
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
 }
 
-.ozon-calculator-table .price-cell-your {
-    color: #34d399 !important;
+/* Ваша цена — приятный зелёный */
+.ozon-calculator-table .price-cell-your,
+#articlesTableBody td:nth-child(6) {
+    color: #22c55e !important;
     font-weight: 700;
     font-family: 'JetBrains Mono', monospace;
+}
+
+/* Цена на Ozon — нейтральный серый */
+#articlesTableBody td:nth-child(7) {
+    color: #94a3b8 !important;
+}
+
+/* При наведении — цены ярче с подсветкой */
+.ozon-calculator-table tbody tr:hover td:nth-child(5),
+#articlesTableBody tr:hover td:nth-child(5) {
+    color: #fcd34d !important;
+    text-shadow: 0 0 10px rgba(252, 211, 77, 0.4);
+}
+
+.ozon-calculator-table tbody tr:hover td:nth-child(6),
+#articlesTableBody tr:hover td:nth-child(6) {
+    color: #4ade80 !important;
+    text-shadow: 0 0 10px rgba(74, 222, 128, 0.4);
+}
+
+/* Выбранная строка */
+.ozon-calculator-table tbody tr.selected {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.05) 100%) !important;
+    border-left: 3px solid #3b82f6;
 }
 
 /* Поле ввода остатков */
@@ -742,11 +826,55 @@ body {
     border-color: #6b7280;
 }
 
-/* Статусы в таблице */
-.status-icon-ok { color: #10b981; }
+/* === СТАТУСЫ — Индикаторы БЕЗ окраски строки === */
+
+/* Статус-иконки в колонке */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.status-indicator.ok,
+.status-indicator.status-ok {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.status-indicator.warning,
+.status-indicator.status-warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+.status-indicator.error,
+.status-indicator.status-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.status-indicator.new,
+.status-indicator.status-new {
+    background: rgba(107, 114, 128, 0.15);
+    color: #9ca3af;
+}
+
+/* Устаревшие классы — для совместимости */
+.status-icon-ok { color: #22c55e; }
 .status-icon-warning { color: #f59e0b; }
 .status-icon-error { color: #ef4444; }
 .status-icon-pending { color: #6b7280; }
+
+/* При наведении на строку — статус ярче */
+#articlesTableBody tr:hover .status-indicator {
+    transform: scale(1.1);
+    box-shadow: 0 0 12px currentColor;
+}
 
 /* Блок управления остатками */
 #stockManagementCard {
@@ -780,10 +908,32 @@ body {
 
 /* Чекбоксы в таблице */
 .article-checkbox {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     cursor: pointer;
     accent-color: #3b82f6;
+    transition: transform 0.15s ease;
+}
+
+#articlesTableBody tr:hover .article-checkbox {
+    transform: scale(1.2);
+}
+
+/* Инпуты в таблице — улучшенный фокус */
+#articlesTableBody input[type="number"],
+#articlesTableBody input[type="text"] {
+    background: #374151 !important;
+    border: 1px solid #4b5563 !important;
+    color: #e5e7eb !important;
+    border-radius: 6px;
+    padding: 6px 10px;
+    transition: all 0.2s ease;
+}
+
+#articlesTableBody input:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3) !important;
+    background: #4b5563 !important;
 }
 
 /* Анимация выбора строки */
@@ -794,6 +944,107 @@ body {
 
 .ozon-calculator-table tbody tr.just-selected {
     animation: rowSelect 0.3s ease;
+}
+
+/* ==================== Бейдж сопоставления ==================== */
+
+.mapping-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+    border: none;
+    box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
+    transition: all 0.2s ease;
+}
+
+.mapping-badge:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 6px rgba(5, 150, 105, 0.4);
+}
+
+.mapping-badge i {
+    flex-shrink: 0;
+}
+
+/* ==================== Улучшенные hover эффекты для таблиц ==================== */
+
+/* Общие стили для строк таблицы с hover */
+.table-hover-enhanced tbody tr {
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.table-hover-enhanced tbody tr:hover {
+    transform: scale(1.005);
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.06) 100%) !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3), 0 0 20px rgba(59, 130, 246, 0.15);
+    z-index: 1;
+    position: relative;
+}
+
+.table-hover-enhanced tbody tr:hover td {
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Чекбоксы в таблице - увеличение при hover */
+.table-hover-enhanced tbody tr .form-check-input {
+    transition: transform 0.15s ease;
+}
+
+.table-hover-enhanced tbody tr:hover .form-check-input {
+    transform: scale(1.15);
+}
+
+/* Кнопки в строках - видимость при hover */
+.table-hover-enhanced tbody tr .btn-row-action {
+    opacity: 0.6;
+    transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.table-hover-enhanced tbody tr:hover .btn-row-action {
+    opacity: 1;
+}
+
+.table-hover-enhanced tbody tr .btn-row-action:hover {
+    transform: scale(1.1);
+}
+
+/* Стили для элементов списка (list-group) с hover */
+.list-group-item-hover-enhanced {
+    transition: all 0.2s ease;
+}
+
+.list-group-item-hover-enhanced:hover {
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), -3px 0 0 #3b82f6;
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%) !important;
+}
+
+/* Таблица ozon-calculator - дополнительные hover стили (основные выше) */
+
+/* Таблица сопоставлений - hover эффекты */
+#mappingsTableBody tr {
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+#mappingsTableBody tr:hover {
+    transform: scale(1.003);
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.04) 100%) !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+#mappingsTableBody tr:hover .btn {
+    opacity: 1;
 }
 
 /* ==================== Print ==================== */

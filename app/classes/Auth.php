@@ -49,6 +49,12 @@ class Auth
             return false;
         }
 
+        // Проверка brute-force защиты
+        if ($this->isLoginBlocked($username)) {
+            logError('Login blocked - too many attempts', ['username' => $username, 'ip' => getUserIP()]);
+            return false;
+        }
+
         // Поиск пользователя по имени или email
         $user = $this->db->fetchOne(
             "SELECT * FROM users WHERE (username = ? OR email = ?) AND is_active = 1",
@@ -57,17 +63,20 @@ class Auth
 
         if (!$user) {
             // Логируем неудачную попытку
+            $this->logLoginAttempt($username, false);
             logError('Failed login attempt', ['username' => $username, 'ip' => getUserIP()]);
             return false;
         }
 
         // Проверка пароля
         if (!password_verify($password, $user['password'])) {
+            $this->logLoginAttempt($username, false);
             logError('Failed login attempt - wrong password', ['username' => $username, 'ip' => getUserIP()]);
             return false;
         }
 
-        // Успешная авторизация
+        // Успешная авторизация - записываем в лог
+        $this->logLoginAttempt($username, true);
         $this->setSession($user);
 
         // Обновляем время последнего входа
@@ -83,6 +92,54 @@ class Auth
         $log->add('login', 'user', $user['id'], null, ['ip' => getUserIP()]);
 
         return true;
+    }
+
+    /**
+     * Проверить не превышен ли лимит попыток входа
+     * @param string $username Имя пользователя
+     * @return bool true если заблокирован
+     */
+    private function isLoginBlocked(string $username): bool
+    {
+        $ip = getUserIP();
+
+        // Проверяем попытки по username за последние 15 минут
+        $usernameAttempts = $this->db->fetchOne(
+            "SELECT COUNT(*) as cnt FROM login_attempts
+             WHERE username = ? AND success = 0 AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)",
+            [$username]
+        );
+
+        // Проверяем попытки по IP за последние 15 минут
+        $ipAttempts = $this->db->fetchOne(
+            "SELECT COUNT(*) as cnt FROM login_attempts
+             WHERE ip_address = ? AND success = 0 AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)",
+            [$ip]
+        );
+
+        // Блокируем если больше 5 попыток по username или 20 по IP
+        return ($usernameAttempts['cnt'] ?? 0) >= 5 || ($ipAttempts['cnt'] ?? 0) >= 20;
+    }
+
+    /**
+     * Записать попытку входа
+     * @param string $username Имя пользователя
+     * @param bool $success Успешна ли попытка
+     */
+    private function logLoginAttempt(string $username, bool $success): void
+    {
+        $ip = getUserIP();
+        $userAgent = getUserAgent();
+
+        $this->db->execute(
+            "INSERT INTO login_attempts (username, ip_address, user_agent, success) VALUES (?, ?, ?, ?)",
+            [$username, $ip, mb_substr($userAgent, 0, 500), $success ? 1 : 0]
+        );
+
+        // Очищаем старые записи (старше 24 часов)
+        $this->db->execute(
+            "DELETE FROM login_attempts WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        );
     }
 
     /**

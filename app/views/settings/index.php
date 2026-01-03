@@ -15,13 +15,20 @@ $ozonSettings = $db->fetchOne(
     "SELECT * FROM api_settings WHERE user_id = ? AND platform = 'ozon'",
     [$userId]
 );
+
+// Получаем настройки Claude
+$claudeKey = $db->fetchOne(
+    "SELECT * FROM user_api_keys WHERE user_id = ? AND service = 'claude'",
+    [$userId]
+);
 ?>
 
 <div class="row">
     <div class="col-12">
         <h4 class="mb-4">
             <i class="bi bi-gear me-2"></i>
-            Настройки API маркетплейсов
+            <span class="hide-mobile">Настройки API маркетплейсов</span>
+            <span class="show-mobile d-none">Настройки API</span>
         </h4>
     </div>
 </div>
@@ -172,6 +179,79 @@ $ozonSettings = $db->fetchOne(
     </div>
 </div>
 
+<!-- Claude AI -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-robot me-2"></i>
+                    Claude AI (Anthropic)
+                </span>
+                <?php if (!empty($claudeKey['api_key']) && ($claudeKey['is_active'] ?? 0)): ?>
+                <span class="badge bg-success">Подключено</span>
+                <?php else: ?>
+                <span class="badge bg-danger">Не настроено</span>
+                <?php endif; ?>
+            </div>
+            <div class="card-body">
+                <form id="claudeSettingsForm">
+                    <div class="mb-3">
+                        <label for="claudeApiKey" class="form-label">
+                            API Key
+                            <a href="https://console.anthropic.com/settings/keys" target="_blank" class="text-muted small">
+                                <i class="bi bi-question-circle"></i>
+                            </a>
+                        </label>
+                        <input type="password"
+                               class="form-control font-monospace"
+                               id="claudeApiKey"
+                               name="api_key"
+                               value="<?= !empty($claudeKey['api_key']) ? '••••••••••••••••' : '' ?>"
+                               placeholder="sk-ant-api03-...">
+                        <div class="form-text">
+                            API ключ для генерации ответов на отзывы и вопросы.
+                            <a href="https://console.anthropic.com/settings/keys" target="_blank">Получить ключ</a>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save me-1"></i> Сохранить
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="testClaudeBtn">
+                            <i class="bi bi-check-circle me-1"></i> Проверить
+                        </button>
+                        <a href="/ai" class="btn btn-outline-info ms-auto">
+                            <i class="bi bi-robot me-1"></i> AI Помощник
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6 mb-4">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-header border-secondary">
+                <i class="bi bi-info-circle me-2"></i>
+                О Claude AI
+            </div>
+            <div class="card-body">
+                <p class="small mb-2">
+                    Claude AI используется для автоматической генерации ответов на отзывы и вопросы покупателей на маркетплейсах.
+                </p>
+                <ul class="small mb-0">
+                    <li>Генерация персонализированных ответов</li>
+                    <li>Учёт тональности отзыва (положительный/негативный)</li>
+                    <li>Использование информации о товаре</li>
+                    <li>Модерация перед отправкой</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Инструкция -->
 <div class="row">
     <div class="col-12">
@@ -306,6 +386,91 @@ document.addEventListener('DOMContentLoaded', function() {
             App.hideLoading();
             App.showToast('Ошибка проверки', 'danger');
         });
+    });
+
+    // Сохранение настроек Claude
+    document.getElementById('claudeSettingsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const apiKey = document.getElementById('claudeApiKey').value;
+
+        // Не отправляем если это маска
+        if (apiKey === '••••••••••••••••' || apiKey === '') {
+            App.showToast('Введите API ключ', 'warning');
+            return;
+        }
+
+        App.showLoading('Проверка и сохранение ключа...');
+
+        fetch('/api/ai/save-claude-key', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': window.csrfToken
+            },
+            body: JSON.stringify({ api_key: apiKey })
+        })
+        .then(response => response.json())
+        .then(data => {
+            App.hideLoading();
+            if (data.success) {
+                App.showToast('API ключ Claude сохранён и проверен', 'success');
+                document.getElementById('claudeApiKey').value = '••••••••••••••••';
+                // Обновляем бейдж статуса
+                const badge = document.querySelector('#claudeSettingsForm').closest('.card').querySelector('.badge');
+                if (badge) {
+                    badge.className = 'badge bg-success';
+                    badge.textContent = 'Подключено';
+                }
+            } else {
+                App.showToast(data.error || 'Ошибка сохранения', 'danger');
+            }
+        })
+        .catch(error => {
+            App.hideLoading();
+            App.showToast('Ошибка соединения', 'danger');
+        });
+    });
+
+    // Проверка Claude
+    document.getElementById('testClaudeBtn').addEventListener('click', function() {
+        App.showLoading('Проверка подключения к Claude...');
+
+        fetch('/api/ai/test-claude', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': window.csrfToken
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            App.hideLoading();
+            if (data.success) {
+                App.showToast('Подключение к Claude работает!', 'success');
+            } else {
+                App.showToast(data.error || 'Ошибка подключения', 'danger');
+            }
+        })
+        .catch(error => {
+            App.hideLoading();
+            App.showToast('Ошибка проверки', 'danger');
+        });
+    });
+
+    // Очистка поля при фокусе если там маска
+    document.getElementById('claudeApiKey').addEventListener('focus', function() {
+        if (this.value === '••••••••••••••••') {
+            this.value = '';
+            this.type = 'text';
+        }
+    });
+
+    document.getElementById('claudeApiKey').addEventListener('blur', function() {
+        if (this.value === '') {
+            this.value = '••••••••••••••••';
+            this.type = 'password';
+        }
     });
 });
 </script>

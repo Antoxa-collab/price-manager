@@ -1,24 +1,28 @@
 /**
- * Price Manager - Калькулятор цен Ozon
+ * Price Manager - Калькулятор цен Wildberries
  * Расчёт и загрузка цен на маркетплейс
  */
 
-const OzonCalculator = {
+const WBCalculator = {
     // Данные
     products: [],           // Товары с сопоставлениями
     articles: [],           // Артикулы выбранного товара
+    warehouses: [],         // Склады WB
     selectedProduct: null,  // Выбранный товар
     selectedArticles: new Set(), // Выбранные артикулы для загрузки
+    syncStats: null,        // Статистика синхронизации
 
     /**
      * Инициализация модуля
      */
     init() {
-        console.log('OzonCalculator.init() started');
+        console.log('WBCalculator.init() started');
         this.bindEvents();
         this.loadProducts();
+        this.loadWarehouses();
+        this.loadSyncStats();
         this.initTooltips();
-        console.log('OzonCalculator.init() completed');
+        console.log('WBCalculator.init() completed');
     },
 
     /**
@@ -40,7 +44,7 @@ const OzonCalculator = {
 
         // Изменение наценок - живой пересчёт
         document.getElementById('markupMin')?.addEventListener('input', () => this.recalculatePrices());
-        document.getElementById('markupYour')?.addEventListener('input', () => this.recalculatePrices());
+        document.getElementById('wbDiscount')?.addEventListener('input', () => this.recalculatePrices());
 
         // Кнопка пересчёта
         document.getElementById('recalculateBtn')?.addEventListener('click', () => this.recalculatePrices());
@@ -78,15 +82,87 @@ const OzonCalculator = {
 
         // Загрузка только остатков
         document.getElementById('uploadStocksOnlyBtn')?.addEventListener('click', () => this.uploadStocksOnly());
+
+        // Синхронизация с WB
+        document.getElementById('syncWbBtn')?.addEventListener('click', () => this.syncWithWB());
     },
 
     /**
-     * Загрузка списка товаров с сопоставлениями
+     * Загрузка статистики синхронизации
+     */
+    async loadSyncStats() {
+        try {
+            const data = await App.fetch('/api/wb/products?limit=1');
+            if (data.stats) {
+                this.syncStats = data.stats;
+                this.renderSyncStats();
+            }
+        } catch (error) {
+            console.error('Failed to load sync stats:', error);
+        }
+    },
+
+    /**
+     * Отображение статистики синхронизации
+     */
+    renderSyncStats() {
+        const row = document.getElementById('syncStatsRow');
+        const text = document.getElementById('syncStatsText');
+        const time = document.getElementById('lastSyncTime');
+
+        if (!this.syncStats || !row) return;
+
+        row.classList.remove('d-none');
+        text.textContent = `Товаров в кэше: ${this.syncStats.total_products || 0} | Сопоставлено: ${this.syncStats.mapped_count || 0}`;
+
+        if (this.syncStats.last_sync) {
+            time.textContent = `Последняя синхронизация: ${new Date(this.syncStats.last_sync).toLocaleString()}`;
+        }
+    },
+
+    /**
+     * Загрузка складов WB
+     */
+    async loadWarehouses() {
+        try {
+            const data = await App.fetch('/api/wb/warehouses');
+            this.warehouses = data.warehouses || [];
+            this.renderWarehouseSelect();
+        } catch (error) {
+            console.error('Failed to load warehouses:', error);
+        }
+    },
+
+    /**
+     * Рендеринг списка складов
+     */
+    renderWarehouseSelect() {
+        const select = document.getElementById('warehouseSelect');
+        if (!select) return;
+
+        select.innerHTML = '';
+
+        if (this.warehouses.length === 0) {
+            select.innerHTML = '<option value="">Нет доступных складов</option>';
+            return;
+        }
+
+        this.warehouses.forEach(wh => {
+            const option = document.createElement('option');
+            option.value = wh.id;
+            option.textContent = wh.name;
+            select.appendChild(option);
+        });
+    },
+
+    /**
+     * Загрузка списка НАШИХ товаров с сопоставлениями WB
      */
     async loadProducts() {
         console.log('loadProducts() called');
         try {
-            const data = await App.fetch('/api/ozon/products-with-mappings');
+            // Загружаем НАШИ товары из таблицы products (не товары WB!)
+            const data = await App.fetch('/api/wb/products-with-mappings');
             console.log('API response:', data);
             this.products = data.products || [];
             console.log('Products loaded:', this.products.length);
@@ -115,7 +191,7 @@ const OzonCalculator = {
             console.log('No products to display');
             select.innerHTML += '<option value="" disabled>Нет товаров с сопоставлениями</option>';
             document.getElementById('productInfo').innerHTML =
-                'Нет товаров с привязанными артикулами. <a href="/ozon/mapping">Создайте сопоставления</a>';
+                'Нет товаров с привязанными артикулами. <a href="/wildberries/mapping">Создайте сопоставления</a>';
             return;
         }
 
@@ -123,13 +199,15 @@ const OzonCalculator = {
             const mappingCount = product.mapping_count || 0;
             const option = document.createElement('option');
             option.value = product.id;
-            option.textContent = `${product.name} (${mappingCount} артикулов)`;
+            // Используем name из таблицы products (НАШИ товары)
+            const productName = product.name || 'Без названия';
+            option.textContent = `${productName} (${mappingCount} артикулов WB)`;
             option.dataset.costPrice = product.cost_price || 0;
             option.dataset.basePrice = product.base_price || 0;
             option.dataset.markupMin = product.markup_min_price || 0;
-            option.dataset.markupYour = product.markup_your_price || 0;
+            option.dataset.wbDiscount = product.wb_discount || 0;
             select.appendChild(option);
-            console.log(`Added option ${index}: id=${product.id}, name=${product.name}`);
+            console.log(`Added option ${index}: id=${product.id}, name=${productName}`);
         });
 
         console.log('Select now has', select.options.length, 'options');
@@ -155,7 +233,7 @@ const OzonCalculator = {
 
         // Загружаем наценки из товара
         document.getElementById('markupMin').value = this.selectedProduct.markup_min_price || 20;
-        document.getElementById('markupYour').value = this.selectedProduct.markup_your_price || 5;
+        document.getElementById('wbDiscount').value = this.selectedProduct.wb_discount || 0;
 
         // Загружаем артикулы товара
         await this.loadArticles(productId);
@@ -168,12 +246,13 @@ const OzonCalculator = {
     },
 
     /**
-     * Загрузка артикулов для выбранного товара
+     * Загрузка артикулов WB для выбранного НАШЕГО товара
      */
     async loadArticles(productId) {
         try {
-            const data = await App.fetch(`/api/ozon/product-articles?product_id=${productId}`);
-            this.articles = data.articles || [];
+            // Загружаем артикулы WB связанные с нашим товаром
+            const data = await App.fetch(`/api/wb/product-articles?product_id=${productId}`);
+            this.articles = data.mappings || [];
             this.selectedArticles.clear();
             this.renderArticlesTable();
         } catch (error) {
@@ -183,54 +262,56 @@ const OzonCalculator = {
 
     /**
      * Пересчёт цен
-     * Формула: cost = (cost_price / pieces_per_sheet) × quantity_in_pack
-     * min_price = cost × (1 + markup_min / 100)
-     * your_price = min_price × (1 + markup_your / 100)
+     * Формула для WB:
+     * cost = (cost_price / pieces_per_sheet) × quantity_in_pack
+     * price_before_discount = cost × (1 + markup_min / 100)
+     * price_after_discount = price_before_discount × (1 - wb_discount / 100)
      */
     recalculatePrices() {
         if (!this.selectedProduct) return;
 
         const markupMin = parseFloat(document.getElementById('markupMin').value) || 0;
-        const markupYour = parseFloat(document.getElementById('markupYour').value) || 0;
+        const wbDiscount = parseFloat(document.getElementById('wbDiscount').value) || 0;
         const costPrice = this.selectedProduct.cost_price || 0;
         const basePrice = this.selectedProduct.base_price || costPrice;
 
         // Расчёт для базовой единицы (1 шт из листа)
-        // Это цена за 1 единицу если pieces_per_sheet=1
-        const unitCost = costPrice; // Закупочная цена за 1 лист/единицу
-        const unitMinPrice = this.roundPrice(unitCost * (1 + markupMin / 100));
-        const unitYourPrice = this.roundPrice(unitMinPrice * (1 + markupYour / 100));
+        const unitCost = costPrice;
+        const unitPriceBeforeDiscount = this.roundPrice(unitCost * (1 + markupMin / 100));
+        const unitPriceAfterDiscount = this.roundPrice(unitPriceBeforeDiscount * (1 - wbDiscount / 100));
 
         // Показываем блок с ценами для 1 листа/единицы
         document.getElementById('calculatedPricesBlock')?.classList.remove('d-none');
         document.getElementById('calcCostPrice').textContent = App.formatPrice(costPrice);
         document.getElementById('calcBasePrice').textContent = App.formatPrice(basePrice);
-        document.getElementById('calcMinPrice').textContent = App.formatPrice(unitMinPrice);
-        document.getElementById('calcYourPrice').textContent = App.formatPrice(unitYourPrice);
+        document.getElementById('calcMinPrice').textContent = App.formatPrice(unitPriceBeforeDiscount);
+        document.getElementById('calcFinalPrice').textContent = App.formatPrice(unitPriceAfterDiscount);
 
         // Пересчитываем цены для каждого артикула
-        // cost = (cost_price / pieces_per_sheet) × quantity_in_pack
         this.articles.forEach(article => {
-            const piecesPerSheet = article.pieces_per_sheet || 1; // Сколько единиц из 1 листа
-            const quantityInPack = article.quantity_in_pack || 1; // Сколько в упаковке на Ozon
+            const piecesPerSheet = article.pieces_per_sheet || 1;
+            const quantityInPack = article.quantity_in_pack || 1;
 
             // Себестоимость: (закупка / кол-во из листа) × кол-во в упаковке
             const articleCost = (costPrice / piecesPerSheet) * quantityInPack;
 
-            // Минимальная цена с наценкой
-            article.calculated_min_price = this.roundPrice(articleCost * (1 + markupMin / 100));
+            // Цена до скидки (для установки на WB)
+            article.calculated_price = this.roundPrice(articleCost * (1 + markupMin / 100));
 
-            // Ваша цена = минимальная × (1 + доп.наценка)
-            article.calculated_your_price = this.roundPrice(article.calculated_min_price * (1 + markupYour / 100));
+            // Цена после скидки (что видит покупатель)
+            article.calculated_final_price = this.roundPrice(article.calculated_price * (1 - wbDiscount / 100));
+
+            // Скидка для артикула
+            article.calculated_discount = wbDiscount;
 
             // Сохраняем себестоимость для отображения
             article.calculated_cost = articleCost;
 
             // Определяем статус
-            const currentPrice = article.mp_price || 0;
+            const currentPrice = article.wb_price || 0;
             if (currentPrice === 0) {
                 article.status = 'new';
-            } else if (Math.abs(currentPrice - article.calculated_your_price) > 1) {
+            } else if (Math.abs(currentPrice - article.calculated_price) > 1) {
                 article.status = 'changed';
             } else {
                 article.status = 'ok';
@@ -273,7 +354,7 @@ const OzonCalculator = {
                         <i class="bi bi-inbox display-4"></i>
                         <p class="mt-3">
                             ${this.selectedProduct
-                                ? 'У этого товара нет привязанных артикулов Ozon'
+                                ? 'У этого товара нет привязанных артикулов Wildberries'
                                 : 'Выберите товар для просмотра привязанных артикулов'}
                         </p>
                     </td>
@@ -299,7 +380,7 @@ const OzonCalculator = {
 
         tbody.querySelectorAll('.edit-pack-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                this.openPackModal(btn.dataset.id, btn.dataset.pieces, btn.dataset.qty);
+                this.openPackModal(btn.dataset.id, btn.dataset.nmid, btn.dataset.pieces, btn.dataset.qty);
             });
         });
 
@@ -317,13 +398,11 @@ const OzonCalculator = {
         // Клик по строке переключает чекбокс
         tbody.querySelectorAll('tr[data-mapping-id]').forEach(row => {
             row.addEventListener('click', (e) => {
-                // Игнорируем клики по интерактивным элементам
                 if (e.target.closest('input, button, a, .edit-pack-btn')) return;
 
                 const checkbox = row.querySelector('.article-checkbox');
                 if (checkbox) {
                     checkbox.checked = !checkbox.checked;
-                    // Триггерим событие change для обновления выборки
                     checkbox.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             });
@@ -332,7 +411,7 @@ const OzonCalculator = {
         // Кнопка удаления сопоставления
         tbody.querySelectorAll('.delete-mapping-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                e.stopPropagation(); // Чтобы не срабатывал клик на строку
+                e.stopPropagation();
                 const mappingId = btn.dataset.id;
                 this.deleteMapping(mappingId);
             });
@@ -343,8 +422,6 @@ const OzonCalculator = {
 
     /**
      * Рендеринг строки артикула
-     * ВАЖНО: Не используем яркие цвета строк (table-warning и т.п.)
-     * Статус показываем только через индикатор в колонке
      */
     renderArticleRow(article) {
         const isSelected = this.selectedArticles.has(String(article.mapping_id));
@@ -359,28 +436,30 @@ const OzonCalculator = {
                            data-id="${article.mapping_id}" ${isSelected ? 'checked' : ''}>
                 </td>
                 <td>
-                    <code>${App.escapeHtml(article.marketplace_offer_id || article.marketplace_product_id || '')}</code>
+                    <code>${App.escapeHtml(article.vendor_code || article.nm_id || '')}</code>
+                    <div class="small text-muted">nmID: ${article.nm_id || '-'}</div>
                 </td>
-                <td class="text-truncate" style="max-width: 200px;" title="${App.escapeHtml(article.marketplace_name || '')}">
-                    ${App.escapeHtml(article.marketplace_name || '-')}
+                <td class="text-truncate" style="max-width: 200px;" title="${App.escapeHtml(article.wb_name || '')}">
+                    ${App.escapeHtml(article.wb_name || '-')}
                 </td>
                 <td class="text-center">
                     <button class="btn btn-sm btn-outline-secondary edit-pack-btn"
                             data-id="${article.mapping_id}"
+                            data-nmid="${article.nm_id}"
                             data-qty="${quantityInPack}"
                             data-pieces="${piecesPerSheet}"
                             title="Из листа: ${piecesPerSheet}, В упаковке: ${quantityInPack}">
                         ${piecesPerSheet}/${quantityInPack}
                     </button>
                 </td>
-                <td class="text-end fw-bold">
-                    ${App.formatPrice(article.calculated_min_price || 0)}
+                <td class="text-end fw-bold text-warning">
+                    ${App.formatPrice(article.calculated_price || 0)}
                 </td>
-                <td class="text-end fw-bold">
-                    ${App.formatPrice(article.calculated_your_price || 0)}
+                <td class="text-end text-info">
+                    ${article.calculated_discount || 0}%
                 </td>
                 <td class="text-end">
-                    ${article.mp_price > 0 ? App.formatPrice(article.mp_price) : '<span class="text-muted">-</span>'}
+                    ${article.wb_price > 0 ? App.formatPrice(article.wb_price) : '<span class="text-muted">-</span>'}
                 </td>
                 <td class="text-center">
                     <input type="number" class="form-control form-control-sm stock-input text-center"
@@ -404,7 +483,6 @@ const OzonCalculator = {
 
     /**
      * Получение индикатора статуса
-     * Использует круглые индикаторы вместо ярких бейджей
      */
     getStatusBadge(status) {
         switch (status) {
@@ -470,7 +548,6 @@ const OzonCalculator = {
         document.getElementById('uploadSelectedBtn').disabled = !hasSelected;
         document.getElementById('uploadAllBtn').disabled = !hasArticles;
 
-        // Кнопка загрузки только остатков — доступна если есть артикулы
         const uploadStocksOnlyBtn = document.getElementById('uploadStocksOnlyBtn');
         if (uploadStocksOnlyBtn) {
             uploadStocksOnlyBtn.disabled = !hasArticles;
@@ -484,30 +561,31 @@ const OzonCalculator = {
         if (!this.selectedProduct) return;
 
         const markupMin = parseFloat(document.getElementById('markupMin').value) || 0;
-        const markupYour = parseFloat(document.getElementById('markupYour').value) || 0;
+        const wbDiscount = parseFloat(document.getElementById('wbDiscount').value) || 0;
 
         try {
-            await App.fetch('/api/ozon/save-markups', {
+            await App.fetch('/api/wb/mapping', {
                 method: 'POST',
                 body: {
+                    action: 'save_markups',
                     product_id: this.selectedProduct.id,
                     markup_min_price: markupMin,
-                    markup_your_price: markupYour
+                    wb_discount: wbDiscount
                 }
             });
 
             // Обновляем локальные данные
             this.selectedProduct.markup_min_price = markupMin;
-            this.selectedProduct.markup_your_price = markupYour;
+            this.selectedProduct.wb_discount = wbDiscount;
 
-            App.showToast('Наценки сохранены', 'success');
+            App.showToast('Настройки сохранены', 'success');
         } catch (error) {
             App.showToast('Ошибка сохранения: ' + error.message, 'danger');
         }
     },
 
     /**
-     * Загрузить выбранные артикулы на Ozon
+     * Загрузить выбранные артикулы на WB
      */
     async uploadSelected() {
         if (this.selectedArticles.size === 0) {
@@ -523,7 +601,7 @@ const OzonCalculator = {
     },
 
     /**
-     * Загрузить все артикулы товара на Ozon
+     * Загрузить все артикулы товара на WB
      */
     async uploadAll() {
         if (this.articles.length === 0) {
@@ -535,54 +613,32 @@ const OzonCalculator = {
     },
 
     /**
-     * Загрузка цен и остатков на Ozon
+     * Загрузка цен на Wildberries
      */
     async uploadPrices(articles) {
-        // Проверяем валидность цен
-        for (const article of articles) {
-            if (article.calculated_min_price >= article.calculated_your_price) {
-                App.showToast(
-                    `Ошибка: min_price должна быть меньше price для артикула ${article.marketplace_offer_id}`,
-                    'danger'
-                );
-                return;
-            }
-        }
+        const wbDiscount = parseFloat(document.getElementById('wbDiscount').value) || 0;
 
-        // Считаем сколько артикулов с остатками
-        const articlesWithStock = articles.filter(a => (a.stock || 0) > 0).length;
-        let confirmMsg = `Загрузить цены для ${articles.length} артикулов на Ozon?`;
-        if (articlesWithStock > 0) {
-            confirmMsg = `Загрузить цены для ${articles.length} артикулов и остатки для ${articlesWithStock} артикулов на Ozon?`;
+        let confirmMsg = `Загрузить цены для ${articles.length} артикулов на Wildberries?`;
+        if (wbDiscount > 0) {
+            confirmMsg += `\nСкидка: ${wbDiscount}%`;
         }
 
         const confirmed = await App.confirm(confirmMsg, 'Подтверждение загрузки');
-
         if (!confirmed) return;
 
         try {
-            const data = await App.fetch('/api/ozon/upload-prices-and-stocks', {
+            const data = await App.fetch('/api/wb/upload-prices', {
                 method: 'POST',
                 body: {
-                    products: articles.map(a => ({
-                        product_id: a.marketplace_product_id,
-                        offer_id: a.marketplace_offer_id,
-                        price: a.calculated_your_price,
-                        min_price: a.calculated_min_price,
-                        old_price: Math.round(a.calculated_your_price * 1.15), // Старая цена +15%
-                        stock: a.stock || 0,
-                        mapping_id: a.mapping_id,
-                        our_product_id: this.selectedProduct.id
+                    prices: articles.map(a => ({
+                        nmID: parseInt(a.nm_id),
+                        price: Math.round(a.calculated_price),
+                        discount: Math.round(a.calculated_discount || wbDiscount)
                     }))
                 }
             });
 
-            // Формируем сообщение
-            let message = data.message || 'Загрузка завершена';
-            if (data.prices_updated || data.stocks_updated) {
-                message = `Цены: ${data.prices_updated || 0}, остатки: ${data.stocks_updated || 0}`;
-            }
-            App.showToast(message, data.success ? 'success' : 'warning');
+            App.showToast(data.message || 'Цены загружены', data.success ? 'success' : 'warning');
 
             // Показываем результаты
             this.showUploadResults(data);
@@ -606,33 +662,21 @@ const OzonCalculator = {
 
         card.classList.remove('d-none');
 
-        const pricesUpdated = data.prices_updated || data.success_count || 0;
-        const stocksUpdated = data.stocks_updated || 0;
-        const warehouseId = data.warehouse_id || null;
+        const updatedCount = data.updated || 0;
         const errorCount = data.error_count || 0;
         const errors = data.errors || [];
 
         content.innerHTML = `
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="d-flex align-items-center">
                     <i class="bi bi-currency-exchange text-success display-6 me-3"></i>
                     <div>
                         <div class="text-muted small">Цены обновлены</div>
-                        <div class="fs-4 fw-bold">${pricesUpdated}</div>
+                        <div class="fs-4 fw-bold">${updatedCount}</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="d-flex align-items-center">
-                    <i class="bi bi-box-seam text-info display-6 me-3"></i>
-                    <div>
-                        <div class="text-muted small">Остатки обновлены</div>
-                        <div class="fs-4 fw-bold">${stocksUpdated}</div>
-                        ${warehouseId ? `<div class="text-muted small">Склад: ${warehouseId}</div>` : ''}
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="d-flex align-items-center">
                     <i class="bi bi-x-circle-fill text-danger display-6 me-3"></i>
                     <div>
@@ -641,7 +685,7 @@ const OzonCalculator = {
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="d-flex align-items-center">
                     <i class="bi bi-clock-history text-secondary display-6 me-3"></i>
                     <div>
@@ -655,24 +699,7 @@ const OzonCalculator = {
                     <div class="alert alert-danger mb-0">
                         <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Ошибки:</h6>
                         <ul class="mb-0 mt-2">
-                            ${errors.map(e => {
-                                const errText = typeof e === 'string' ? e : JSON.stringify(e);
-                                let icon = 'bi-x-circle';
-                                let hint = '';
-
-                                if (errText.includes('частое') || errText.includes('frequently') || errText.includes('30 сек')) {
-                                    icon = 'bi-clock';
-                                    hint = ' <small class="text-muted">(подождите 30 сек и повторите)</small>';
-                                } else if (errText.includes('склад') || errText.includes('warehouse') || errText.includes('Склад')) {
-                                    icon = 'bi-building';
-                                    hint = ' <small class="text-muted">(проверьте настройки склада в Ozon Seller)</small>';
-                                } else if (errText.includes('disabled') || errText.includes('отключен')) {
-                                    icon = 'bi-slash-circle';
-                                    hint = ' <small class="text-muted">(активируйте склад в Ozon Seller → Настройки → Склады)</small>';
-                                }
-
-                                return `<li><i class="${icon} me-1"></i>${App.escapeHtml(errText)}${hint}</li>`;
-                            }).join('')}
+                            ${errors.map(e => `<li>${App.escapeHtml(typeof e === 'string' ? e : JSON.stringify(e))}</li>`).join('')}
                         </ul>
                     </div>
                 </div>
@@ -683,12 +710,12 @@ const OzonCalculator = {
     /**
      * Открыть модальное окно редактирования параметров упаковки
      */
-    openPackModal(mappingId, piecesPerSheet, quantityInPack) {
+    openPackModal(mappingId, nmId, piecesPerSheet, quantityInPack) {
         document.getElementById('editPackMappingId').value = mappingId;
+        document.getElementById('editPackNmId').value = nmId;
         document.getElementById('editPiecesPerSheet').value = piecesPerSheet || 1;
         document.getElementById('editQuantityInPack').value = quantityInPack || 1;
 
-        // Пересчитываем превью
         this.updatePackPreview();
 
         const modal = new bootstrap.Modal(document.getElementById('editPackModal'));
@@ -703,7 +730,6 @@ const OzonCalculator = {
         const quantityInPack = parseInt(document.getElementById('editQuantityInPack').value) || 1;
         const costPrice = this.selectedProduct?.cost_price || 0;
 
-        // Расчёт себестоимости по формуле
         const articleCost = (costPrice / piecesPerSheet) * quantityInPack;
 
         const preview = document.getElementById('packPreview');
@@ -724,9 +750,10 @@ const OzonCalculator = {
         const quantityInPack = parseInt(document.getElementById('editQuantityInPack').value) || 1;
 
         try {
-            await App.fetch('/api/ozon/update-pack-settings', {
+            await App.fetch('/api/wb/mapping', {
                 method: 'POST',
                 body: {
+                    action: 'update_pack',
                     mapping_id: mappingId,
                     pieces_per_sheet: piecesPerSheet,
                     quantity_in_pack: quantityInPack
@@ -743,7 +770,6 @@ const OzonCalculator = {
                 article.quantity_in_pack = quantityInPack;
             }
 
-            // Пересчитываем цены
             this.recalculatePrices();
 
         } catch (error) {
@@ -752,8 +778,7 @@ const OzonCalculator = {
     },
 
     /**
-     * Автозаполнение pieces_per_sheet и quantity_in_pack из названий артикулов
-     * Парсит размеры (760x760) и количество (5шт) из названий на Ozon
+     * Автозаполнение pieces_per_sheet и quantity_in_pack из артикулов WB
      */
     async autoFillFromNames() {
         if (!this.selectedProduct) {
@@ -767,23 +792,36 @@ const OzonCalculator = {
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
         try {
-            const result = await App.fetch('/api/ozon/auto-fill-pieces', {
-                method: 'POST',
-                body: {
-                    product_id: this.selectedProduct.id,
-                    base_width: 1520,
-                    base_height: 1520
-                }
-            });
+            let updated = 0;
 
-            if (result.success) {
-                App.showToast(`Обновлено ${result.updated} артикулов`, 'success');
-                // Перезагружаем артикулы чтобы увидеть обновлённые данные
-                await this.loadArticles(this.selectedProduct.id);
-                this.recalculatePrices();
-            } else {
-                App.showToast('Ошибка: ' + (result.message || 'Неизвестная ошибка'), 'danger');
+            for (const article of this.articles) {
+                // Парсим артикул WB
+                const parseResult = await App.fetch(`/api/wb/parse-article?article=${encodeURIComponent(article.vendor_code || '')}`);
+
+                if (parseResult.success && parseResult.data) {
+                    const { pieces_per_sheet, quantity_in_pack } = parseResult.data;
+
+                    if (pieces_per_sheet || quantity_in_pack) {
+                        await App.fetch('/api/wb/mapping', {
+                            method: 'POST',
+                            body: {
+                                action: 'update_pack',
+                                mapping_id: article.mapping_id,
+                                pieces_per_sheet: pieces_per_sheet || article.pieces_per_sheet || 1,
+                                quantity_in_pack: quantity_in_pack || article.quantity_in_pack || 1
+                            }
+                        });
+
+                        article.pieces_per_sheet = pieces_per_sheet || article.pieces_per_sheet;
+                        article.quantity_in_pack = quantity_in_pack || article.quantity_in_pack;
+                        updated++;
+                    }
+                }
             }
+
+            App.showToast(`Обновлено ${updated} артикулов`, 'success');
+            this.recalculatePrices();
+
         } catch (error) {
             App.showToast('Ошибка: ' + error.message, 'danger');
         } finally {
@@ -794,13 +832,11 @@ const OzonCalculator = {
 
     /**
      * Применить остатки к артикулам
-     * @param {boolean} applyToAll - применить ко всем или только к выбранным
      */
     applyBulkStock(applyToAll = false) {
         const stock = parseInt(document.getElementById('bulkStock')?.value) || 0;
 
         if (applyToAll) {
-            // Применяем ко всем артикулам
             this.articles.forEach(article => {
                 article.stock = stock;
             });
@@ -809,7 +845,6 @@ const OzonCalculator = {
             });
             App.showToast(`Остатки ${stock} применены ко всем артикулам`, 'success');
         } else {
-            // Применяем только к выбранным
             if (this.selectedArticles.size === 0) {
                 App.showToast('Сначала выберите артикулы', 'warning');
                 return;
@@ -848,10 +883,9 @@ const OzonCalculator = {
     },
 
     /**
-     * Загрузка ТОЛЬКО остатков (без цен)
+     * Загрузка ТОЛЬКО остатков на WB
      */
     async uploadStocksOnly() {
-        // Получаем выбранные или все артикулы
         let articlesToUpload = [];
         if (this.selectedArticles.size > 0) {
             articlesToUpload = this.articles.filter(a => this.selectedArticles.has(String(a.mapping_id)));
@@ -864,9 +898,14 @@ const OzonCalculator = {
             return;
         }
 
-        // Подтверждение
+        const warehouseId = document.getElementById('warehouseSelect')?.value;
+        if (!warehouseId) {
+            App.showToast('Выберите склад для загрузки остатков', 'warning');
+            return;
+        }
+
         const confirmed = await App.confirm(
-            `Загрузить остатки для ${articlesToUpload.length} артикулов на Ozon?`,
+            `Загрузить остатки для ${articlesToUpload.length} артикулов на Wildberries?`,
             'Загрузка остатков'
         );
         if (!confirmed) return;
@@ -880,28 +919,27 @@ const OzonCalculator = {
 
         try {
             const stocks = articlesToUpload.map(article => ({
-                offer_id: article.marketplace_offer_id,
-                product_id: article.marketplace_product_id,
-                stock: parseInt(article.stock) || 0
+                sku: article.vendor_code,
+                amount: parseInt(article.stock) || 0
             }));
 
-            const result = await App.fetch('/api/ozon/upload-stocks-only', {
+            const result = await App.fetch('/api/wb/upload-stocks', {
                 method: 'POST',
-                body: { stocks }
+                body: {
+                    warehouse_id: parseInt(warehouseId),
+                    stocks: stocks
+                }
             });
 
-            // Показываем результаты
             this.showUploadResults({
                 success: result.success,
-                prices_updated: 0,
-                stocks_updated: result.updated || 0,
-                warehouse_id: result.warehouse_id,
+                updated: result.updated || 0,
                 errors: result.errors || [],
                 error_count: (result.errors || []).length
             });
 
             if (result.success) {
-                App.showToast(`Остатки загружены: ${result.updated || 0} из ${stocks.length}`, 'success');
+                App.showToast(`Остатки загружены: ${result.updated || 0}`, 'success');
             } else {
                 App.showToast('Ошибка: ' + (result.error || result.message || 'Неизвестная ошибка'), 'danger');
             }
@@ -918,7 +956,7 @@ const OzonCalculator = {
     },
 
     /**
-     * Удаление сопоставления (связи с артикулом Ozon)
+     * Удаление сопоставления
      */
     async deleteMapping(mappingId) {
         if (!mappingId) {
@@ -926,31 +964,28 @@ const OzonCalculator = {
             return;
         }
 
-        // Находим артикул для отображения в подтверждении
         const article = this.articles.find(a => String(a.mapping_id) === String(mappingId));
-        const articleName = article?.marketplace_offer_id || article?.marketplace_name || mappingId;
+        const articleName = article?.vendor_code || article?.wb_name || mappingId;
 
         const confirmed = await App.confirm(
-            `Удалить связь с артикулом "${articleName}"?\n\nАртикул останется в кэше Ozon, но не будет привязан к этому товару.`,
+            `Удалить связь с артикулом "${articleName}"?`,
             'Подтверждение удаления'
         );
 
         if (!confirmed) return;
 
         try {
-            const result = await App.fetch('/api/ozon/delete-mapping', {
-                method: 'POST',
+            const result = await App.fetch('/api/wb/mapping', {
+                method: 'DELETE',
                 body: { mapping_id: mappingId }
             });
 
             if (result.success) {
                 App.showToast('Сопоставление удалено', 'success');
 
-                // Удаляем из локального массива
                 this.articles = this.articles.filter(a => String(a.mapping_id) !== String(mappingId));
                 this.selectedArticles.delete(String(mappingId));
 
-                // Перерисовываем таблицу
                 this.renderArticlesTable();
                 this.updateButtons();
             } else {
@@ -963,7 +998,51 @@ const OzonCalculator = {
     },
 
     /**
-     * Округление цены по правилам маркетплейса
+     * Синхронизация с Wildberries
+     */
+    async syncWithWB() {
+        const modal = new bootstrap.Modal(document.getElementById('syncModal'));
+        modal.show();
+
+        // Показываем загрузку
+        document.getElementById('syncModalLoading').classList.remove('d-none');
+        document.getElementById('syncModalResult').classList.add('d-none');
+        document.getElementById('syncModalError').classList.add('d-none');
+        document.getElementById('syncModalFooter').classList.add('d-none');
+
+        try {
+            const result = await App.fetch('/api/wb/sync-products', {
+                method: 'POST',
+                timeout: 120000 // 2 минуты таймаут
+            });
+
+            document.getElementById('syncModalLoading').classList.add('d-none');
+
+            if (result.success) {
+                document.getElementById('syncModalResult').classList.remove('d-none');
+                document.getElementById('syncResultText').textContent =
+                    `Синхронизировано ${result.synced || 0} товаров`;
+
+                // Перезагружаем данные
+                await this.loadProducts();
+                await this.loadSyncStats();
+            } else {
+                document.getElementById('syncModalError').classList.remove('d-none');
+                document.getElementById('syncErrorText').textContent =
+                    result.error || 'Неизвестная ошибка';
+            }
+
+        } catch (error) {
+            document.getElementById('syncModalLoading').classList.add('d-none');
+            document.getElementById('syncModalError').classList.remove('d-none');
+            document.getElementById('syncErrorText').textContent = error.message;
+        }
+
+        document.getElementById('syncModalFooter').classList.remove('d-none');
+    },
+
+    /**
+     * Округление цены по правилам WB
      */
     roundPrice(price) {
         if (price < 100) {
@@ -985,4 +1064,4 @@ const OzonCalculator = {
 };
 
 // Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => OzonCalculator.init());
+document.addEventListener('DOMContentLoaded', () => WBCalculator.init());

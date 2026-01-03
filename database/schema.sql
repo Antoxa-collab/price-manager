@@ -172,25 +172,31 @@ CREATE TABLE `operations_log` (
 
 -- ----------------------------
 -- Table: product_mappings (сопоставление наших товаров с артикулами маркетплейсов)
+-- Единая таблица для всех маркетплейсов (Ozon, WB, Yandex)
 -- ----------------------------
 DROP TABLE IF EXISTS `product_mappings`;
 CREATE TABLE `product_mappings` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT UNSIGNED NOT NULL COMMENT 'ID пользователя',
     `product_id` INT UNSIGNED NOT NULL COMMENT 'Наш товар (материал+сорт+толщина)',
     `marketplace` ENUM('ozon', 'wildberries', 'yandex') NOT NULL DEFAULT 'ozon',
-    `marketplace_product_id` VARCHAR(100) NOT NULL COMMENT 'product_id на маркетплейсе',
-    `marketplace_sku` VARCHAR(100) NULL COMMENT 'SKU на маркетплейсе',
-    `marketplace_offer_id` VARCHAR(100) NULL COMMENT 'offer_id (артикул продавца)',
+    `marketplace_product_id` VARCHAR(100) NOT NULL COMMENT 'product_id/nmId на маркетплейсе',
+    `marketplace_sku` VARCHAR(100) NULL COMMENT 'SKU/chrtId на маркетплейсе',
+    `marketplace_offer_id` VARCHAR(100) NULL COMMENT 'offer_id/vendorCode (артикул продавца)',
     `marketplace_name` VARCHAR(500) NULL COMMENT 'Название на маркетплейсе',
     `quantity_in_pack` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Количество единиц в упаковке',
+    `pieces_per_sheet` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Сколько кусочков получается из листа',
+    `cost_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT 'Себестоимость единицы',
     `is_active` TINYINT(1) NOT NULL DEFAULT 1,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_mapping` (`product_id`, `marketplace`, `marketplace_product_id`),
+    UNIQUE KEY `uk_mapping` (`user_id`, `product_id`, `marketplace`, `marketplace_product_id`),
+    KEY `idx_user` (`user_id`),
     KEY `idx_marketplace` (`marketplace`),
     KEY `idx_product` (`product_id`),
     KEY `idx_marketplace_product_id` (`marketplace_product_id`),
+    CONSTRAINT `fk_mapping_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
     CONSTRAINT `fk_mapping_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

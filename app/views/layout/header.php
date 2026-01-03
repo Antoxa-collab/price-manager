@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Price Manager - Калькулятор цен для маркетплейсов">
+    <meta name="csrf-token" content="<?= e(generateCsrfToken()) ?>">
     <title><?= e($pageTitle ?? 'Price Manager') ?> - <?= APP_NAME ?></title>
 
     <!-- Bootstrap 5.3 CSS -->
@@ -14,6 +15,9 @@
 
     <!-- Custom CSS -->
     <link href="/css/style.css" rel="stylesheet">
+
+    <!-- Mobile CSS -->
+    <link href="/css/mobile.css" rel="stylesheet">
 </head>
 <body>
     <!-- Верхняя навигация -->
@@ -78,6 +82,19 @@
             </div>
         </div>
     </nav>
+
+    <!-- Mobile Header (visible only on mobile) -->
+    <?php if (isset($auth) && $auth->isLoggedIn()): ?>
+    <div class="mobile-header">
+        <button class="hamburger-btn" id="sidebarToggle" aria-label="Toggle menu">
+            <i class="bi bi-list"></i>
+        </button>
+        <span class="mobile-title"><?= e($pageTitle ?? APP_NAME) ?></span>
+    </div>
+    <?php endif; ?>
+
+    <!-- Sidebar Overlay (for mobile) -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
     <!-- Основной контейнер -->
     <div class="wrapper">

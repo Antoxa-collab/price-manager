@@ -997,7 +997,14 @@ class OzonAPI
 
         // Пробуем разные поля с ошибкой
         if (isset($result['message'])) {
-            return $result['message'];
+            $msg = $result['message'];
+
+            // Человекочитаемое сообщение для ошибки Premium Plus
+            if (stripos($msg, 'Premium Plus') !== false || stripos($msg, 'PermissionDenied') !== false) {
+                return 'Требуется подписка Premium Plus или Premium Pro для доступа к API отзывов и вопросов';
+            }
+
+            return $msg;
         }
 
         if (isset($result['error'])) {
@@ -1021,5 +1028,718 @@ class OzonAPI
         }
 
         return 'Неизвестная ошибка (см. логи)';
+    }
+
+    // ==========================================
+    // РАБОТА С ОТЗЫВАМИ (Premium Plus / Premium Pro)
+    // ==========================================
+
+    /**
+     * Количество отзывов по статусам
+     * POST /v1/review/count
+     *
+     * @return array {success, total, processed, unprocessed}
+     */
+    public function getReviewsCount(): array
+    {
+        try {
+            // Пустой объект {} для запроса без параметров
+            $response = $this->request('POST', '/v1/review/count', []);
+
+            return [
+                'success' => true,
+                'total' => (int)($response['total'] ?? 0),
+                'processed' => (int)($response['processed'] ?? 0),
+                'unprocessed' => (int)($response['unprocessed'] ?? 0)
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'total' => 0,
+                'processed' => 0,
+                'unprocessed' => 0
+            ];
+        }
+    }
+
+    /**
+     * Получить список отзывов
+     * POST /v1/review/list
+     *
+     * Пример запроса:
+     * {
+     *   "last_id": "",
+     *   "limit": 100,
+     *   "sort_dir": "ASC",
+     *   "status": "ALL"
+     * }
+     *
+     * Пример ответа:
+     * {
+     *   "has_next": true,
+     *   "last_id": "string",
+     *   "reviews": [{
+     *     "comments_amount": 0,
+     *     "id": "string",
+     *     "is_rating_participant": true,
+     *     "order_status": "DELIVERED",
+     *     "photos_amount": 0,
+     *     "published_at": "2019-08-24T14:15:22Z",
+     *     "rating": 5,
+     *     "sku": 123456,
+     *     "status": "UNPROCESSED",
+     *     "text": "Отзыв покупателя",
+     *     "videos_amount": 0
+     *   }]
+     * }
+     *
+     * @param int $limit Количество (20-100)
+     * @param string $lastId ID последнего отзыва для пагинации (пустая строка для первой страницы)
+     * @param string $status ALL|UNPROCESSED|PROCESSED
+     * @param string $sortDir ASC|DESC
+     * @return array
+     */
+    public function getReviews(int $limit = 100, string $lastId = '', string $status = 'ALL', string $sortDir = 'DESC'): array
+    {
+        $body = [
+            'limit' => min(max($limit, 20), 100),
+            'last_id' => $lastId,
+            'sort_dir' => $sortDir,
+            'status' => $status
+        ];
+
+        try {
+            $response = $this->request('POST', '/v1/review/list', $body);
+
+            $reviews = [];
+            foreach ($response['reviews'] ?? [] as $review) {
+                $reviews[] = [
+                    'marketplace_review_id' => (string)$review['id'],
+                    'sku' => (int)($review['sku'] ?? 0),
+                    'rating' => (int)($review['rating'] ?? 5),
+                    'review_text' => $review['text'] ?? '',
+                    'review_date' => $review['published_at'] ?? date('Y-m-d H:i:s'),
+                    'status' => $review['status'] ?? 'UNPROCESSED',
+                    'order_status' => $review['order_status'] ?? '',
+                    'comments_amount' => (int)($review['comments_amount'] ?? 0),
+                    'photos_amount' => (int)($review['photos_amount'] ?? 0),
+                    'videos_amount' => (int)($review['videos_amount'] ?? 0),
+                    'is_rating_participant' => (bool)($review['is_rating_participant'] ?? true)
+                ];
+            }
+
+            return [
+                'success' => true,
+                'reviews' => $reviews,
+                'has_next' => (bool)($response['has_next'] ?? false),
+                'last_id' => $response['last_id'] ?? ''
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'reviews' => [],
+                'has_next' => false,
+                'last_id' => ''
+            ];
+        }
+    }
+
+    /**
+     * Получить ВСЕ отзывы с автоматической пагинацией
+     *
+     * @param int $maxPages Максимум страниц (защита от бесконечного цикла)
+     * @param string $status ALL|UNPROCESSED|PROCESSED
+     * @return array
+     */
+    public function getAllReviews(int $maxPages = 20, string $status = 'ALL'): array
+    {
+        $allReviews = [];
+        $lastId = '';
+        $page = 0;
+
+        do {
+            $result = $this->getReviews(100, $lastId, $status);
+
+            if (!$result['success']) {
+                // Если первая страница — возвращаем ошибку
+                if ($page === 0) {
+                    return $result;
+                }
+                // Иначе возвращаем что успели получить
+                break;
+            }
+
+            $allReviews = array_merge($allReviews, $result['reviews']);
+            $lastId = $result['last_id'];
+            $page++;
+
+            // Задержка между запросами (защита от rate limit)
+            if ($result['has_next'] && !empty($lastId)) {
+                usleep(300000); // 300ms
+            }
+
+        } while ($result['has_next'] && $page < $maxPages && !empty($lastId));
+
+        return [
+            'success' => true,
+            'reviews' => $allReviews,
+            'total' => count($allReviews),
+            'pages_loaded' => $page
+        ];
+    }
+
+    /**
+     * Получить информацию об одном отзыве
+     * POST /v1/review/info
+     *
+     * @param string $reviewId
+     * @return array
+     */
+    public function getReviewInfo(string $reviewId): array
+    {
+        try {
+            $response = $this->request('POST', '/v1/review/info', [
+                'review_id' => $reviewId
+            ]);
+
+            return [
+                'success' => true,
+                'review' => [
+                    'id' => $response['id'] ?? $reviewId,
+                    'sku' => (int)($response['sku'] ?? 0),
+                    'rating' => (int)($response['rating'] ?? 5),
+                    'text' => $response['text'] ?? '',
+                    'published_at' => $response['published_at'] ?? null,
+                    'status' => $response['status'] ?? 'UNPROCESSED',
+                    'order_status' => $response['order_status'] ?? '',
+                    'comments_amount' => (int)($response['comments_amount'] ?? 0),
+                    'likes_amount' => (int)($response['likes_amount'] ?? 0),
+                    'dislikes_amount' => (int)($response['dislikes_amount'] ?? 0),
+                    'photos_amount' => (int)($response['photos_amount'] ?? 0),
+                    'videos_amount' => (int)($response['videos_amount'] ?? 0),
+                    'photos' => $response['photos'] ?? [],
+                    'videos' => $response['videos'] ?? [],
+                    'is_rating_participant' => (bool)($response['is_rating_participant'] ?? true)
+                ]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Оставить комментарий (ответ) на отзыв
+     * POST /v1/review/comment/create
+     *
+     * Пример запроса:
+     * {
+     *   "mark_review_as_processed": true,
+     *   "parent_comment_id": "string",  // опционально
+     *   "review_id": "string",
+     *   "text": "string"
+     * }
+     *
+     * @param string $reviewId ID отзыва
+     * @param string $text Текст комментария
+     * @param bool $markAsProcessed Отметить отзыв как обработанный
+     * @param string|null $parentCommentId ID родительского комментария (для ответа на комментарий)
+     * @return array
+     */
+    public function replyToReview(string $reviewId, string $text, bool $markAsProcessed = true, ?string $parentCommentId = null): array
+    {
+        $body = [
+            'review_id' => $reviewId,
+            'text' => $text,
+            'mark_review_as_processed' => $markAsProcessed
+        ];
+
+        if ($parentCommentId !== null && $parentCommentId !== '') {
+            $body['parent_comment_id'] = $parentCommentId;
+        }
+
+        try {
+            $response = $this->request('POST', '/v1/review/comment/create', $body);
+
+            return [
+                'success' => true,
+                'comment_id' => $response['comment_id'] ?? null
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Удалить комментарий на отзыв
+     * POST /v1/review/comment/delete
+     *
+     * @param string $commentId ID комментария
+     * @return array
+     */
+    public function deleteReviewComment(string $commentId): array
+    {
+        try {
+            $this->request('POST', '/v1/review/comment/delete', [
+                'comment_id' => $commentId
+            ]);
+
+            return ['success' => true];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить список комментариев на отзыв
+     * POST /v1/review/comment/list
+     *
+     * ВНИМАНИЕ: Этот метод использует offset, а не last_id!
+     *
+     * @param string $reviewId ID отзыва
+     * @param int $limit Лимит (20-100)
+     * @param int $offset Смещение
+     * @param string $sortDir ASC|DESC
+     * @return array
+     */
+    public function getReviewComments(string $reviewId, int $limit = 100, int $offset = 0, string $sortDir = 'ASC'): array
+    {
+        try {
+            $response = $this->request('POST', '/v1/review/comment/list', [
+                'review_id' => $reviewId,
+                'limit' => min(max($limit, 20), 100),
+                'offset' => $offset,
+                'sort_dir' => $sortDir
+            ]);
+
+            return [
+                'success' => true,
+                'comments' => $response['comments'] ?? [],
+                'offset' => (int)($response['offset'] ?? 0)
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'comments' => []
+            ];
+        }
+    }
+
+    /**
+     * Изменить статус отзывов
+     * POST /v1/review/change-status
+     *
+     * @param array $reviewIds Массив ID отзывов (1-100)
+     * @param string $status PROCESSED|UNPROCESSED
+     * @return array
+     */
+    public function changeReviewsStatus(array $reviewIds, string $status): array
+    {
+        if (empty($reviewIds)) {
+            return ['success' => false, 'error' => 'Не указаны ID отзывов'];
+        }
+
+        try {
+            $this->request('POST', '/v1/review/change-status', [
+                'review_ids' => array_slice($reviewIds, 0, 100),
+                'status' => $status
+            ]);
+
+            return ['success' => true];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    // ==========================================
+    // РАБОТА С ВОПРОСАМИ (Premium Plus)
+    // ==========================================
+
+    /**
+     * Количество вопросов по статусам
+     * POST /v1/question/count
+     *
+     * Пример ответа:
+     * {
+     *   "all": 10,
+     *   "new": 3,
+     *   "processed": 4,
+     *   "unprocessed": 1,
+     *   "viewed": 1
+     * }
+     *
+     * @return array
+     */
+    public function getQuestionsCount(): array
+    {
+        try {
+            // Пустой объект для запроса без параметров
+            $response = $this->request('POST', '/v1/question/count', []);
+
+            return [
+                'success' => true,
+                'all' => (int)($response['all'] ?? 0),
+                'new' => (int)($response['new'] ?? 0),
+                'viewed' => (int)($response['viewed'] ?? 0),
+                'processed' => (int)($response['processed'] ?? 0),
+                'unprocessed' => (int)($response['unprocessed'] ?? 0)
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'all' => 0
+            ];
+        }
+    }
+
+    /**
+     * Получить список вопросов
+     * POST /v1/question/list
+     *
+     * ВАЖНО: Возвращает до 10 вопросов за раз!
+     *
+     * Пример запроса:
+     * {
+     *   "filter": {
+     *     "date_from": "2019-08-24T14:15:22Z",
+     *     "date_to": "2019-08-24T14:15:22Z",
+     *     "status": "ALL"
+     *   },
+     *   "last_id": ""
+     * }
+     *
+     * Пример ответа:
+     * {
+     *   "questions": [{
+     *     "answers_count": 1,
+     *     "author_name": "Пользователь OZON",
+     *     "id": "019294ff-6888-7009-89d8-26569e4e450d",
+     *     "sku": 646399170,
+     *     "product_url": "https://www.ozon.ru/product/1649246352/",
+     *     "published_at": "2024-08-14T12:02:01.889Z",
+     *     "question_link": "https://www.ozon.ru/product/.../questions/...",
+     *     "text": "Новый вопрос о товаре",
+     *     "status": "PROCESSED"
+     *   }],
+     *   "last_id": "019228a7-91d8-76af-a73a-e989dfac7ac8"
+     * }
+     *
+     * @param string $lastId ID последнего вопроса для пагинации
+     * @param string $status ALL|NEW|VIEWED|PROCESSED|UNPROCESSED
+     * @param string|null $dateFrom Дата от (ISO 8601: 2019-08-24T14:15:22Z)
+     * @param string|null $dateTo Дата до (ISO 8601)
+     * @return array
+     */
+    public function getQuestions(string $lastId = '', string $status = 'ALL', ?string $dateFrom = null, ?string $dateTo = null): array
+    {
+        $filter = ['status' => $status];
+
+        if ($dateFrom) {
+            $filter['date_from'] = $dateFrom;
+        }
+        if ($dateTo) {
+            $filter['date_to'] = $dateTo;
+        }
+
+        $body = [
+            'filter' => $filter,
+            'last_id' => $lastId
+        ];
+
+        try {
+            $response = $this->request('POST', '/v1/question/list', $body);
+
+            $questions = [];
+            foreach ($response['questions'] ?? [] as $q) {
+                $questions[] = [
+                    'marketplace_question_id' => (string)$q['id'],
+                    'sku' => (int)($q['sku'] ?? 0),
+                    'author_name' => $q['author_name'] ?? 'Пользователь OZON',
+                    'question_text' => $q['text'] ?? '',
+                    'question_date' => $q['published_at'] ?? date('Y-m-d H:i:s'),
+                    'status' => $q['status'] ?? 'NEW',
+                    'answers_count' => (int)($q['answers_count'] ?? 0),
+                    'product_url' => $q['product_url'] ?? '',
+                    'question_link' => $q['question_link'] ?? ''
+                ];
+            }
+
+            // has_next определяем по наличию last_id и количеству вопросов
+            $hasNext = !empty($response['last_id']) && count($questions) > 0;
+
+            return [
+                'success' => true,
+                'questions' => $questions,
+                'has_next' => $hasNext,
+                'last_id' => $response['last_id'] ?? ''
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'questions' => [],
+                'has_next' => false,
+                'last_id' => ''
+            ];
+        }
+    }
+
+    /**
+     * Получить ВСЕ вопросы с автоматической пагинацией
+     *
+     * ВАЖНО: API возвращает до 10 вопросов за раз!
+     * Поэтому maxPages = 100 даст максимум 1000 вопросов
+     *
+     * @param int $maxPages Максимум страниц
+     * @param string $status ALL|NEW|VIEWED|PROCESSED|UNPROCESSED
+     * @return array
+     */
+    public function getAllQuestions(int $maxPages = 100, string $status = 'ALL'): array
+    {
+        $allQuestions = [];
+        $lastId = '';
+        $page = 0;
+
+        do {
+            $result = $this->getQuestions($lastId, $status);
+
+            if (!$result['success']) {
+                if ($page === 0) {
+                    return $result;
+                }
+                break;
+            }
+
+            $allQuestions = array_merge($allQuestions, $result['questions']);
+            $lastId = $result['last_id'];
+            $page++;
+
+            if ($result['has_next'] && !empty($lastId)) {
+                usleep(300000); // 300ms
+            }
+
+        } while ($result['has_next'] && $page < $maxPages && !empty($lastId));
+
+        return [
+            'success' => true,
+            'questions' => $allQuestions,
+            'total' => count($allQuestions),
+            'pages_loaded' => $page
+        ];
+    }
+
+    /**
+     * Получить информацию о вопросе
+     * POST /v1/question/info
+     *
+     * @param string $questionId
+     * @return array
+     */
+    public function getQuestionInfo(string $questionId): array
+    {
+        try {
+            $response = $this->request('POST', '/v1/question/info', [
+                'question_id' => $questionId
+            ]);
+
+            return [
+                'success' => true,
+                'question' => [
+                    'id' => $response['id'] ?? $questionId,
+                    'sku' => (int)($response['sku'] ?? 0),
+                    'author_name' => $response['author_name'] ?? 'Пользователь OZON',
+                    'text' => $response['text'] ?? '',
+                    'published_at' => $response['published_at'] ?? null,
+                    'status' => $response['status'] ?? 'NEW',
+                    'answers_count' => (int)($response['answers_count'] ?? 0),
+                    'product_url' => $response['product_url'] ?? '',
+                    'question_link' => $response['question_link'] ?? ''
+                ]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Создать ответ на вопрос
+     * POST /v1/question/answer/create
+     *
+     * ВАЖНО:
+     * - Требует sku (int64) — ID товара
+     * - text должен быть от 2 до 3000 символов
+     *
+     * Пример запроса:
+     * {
+     *   "question_id": "string",
+     *   "sku": 646399170,
+     *   "text": "string"
+     * }
+     *
+     * Пример ответа:
+     * {
+     *   "answer_id": "0192e7ce-e12c-7a74-afc7-26e877799204"
+     * }
+     *
+     * @param string $questionId ID вопроса
+     * @param int $sku SKU товара (ОБЯЗАТЕЛЬНО!)
+     * @param string $text Текст ответа (2-3000 символов)
+     * @return array
+     */
+    public function answerQuestion(string $questionId, int $sku, string $text): array
+    {
+        // Валидация длины текста
+        $textLength = mb_strlen($text, 'UTF-8');
+        if ($textLength < 2) {
+            return [
+                'success' => false,
+                'error' => 'Текст ответа слишком короткий (минимум 2 символа)'
+            ];
+        }
+        if ($textLength > 3000) {
+            return [
+                'success' => false,
+                'error' => 'Текст ответа слишком длинный (максимум 3000 символов)'
+            ];
+        }
+
+        if ($sku <= 0) {
+            return [
+                'success' => false,
+                'error' => 'Не указан SKU товара'
+            ];
+        }
+
+        try {
+            $response = $this->request('POST', '/v1/question/answer/create', [
+                'question_id' => $questionId,
+                'sku' => $sku,
+                'text' => $text
+            ]);
+
+            return [
+                'success' => true,
+                'answer_id' => $response['answer_id'] ?? null
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Удалить ответ на вопрос
+     * POST /v1/question/answer/delete
+     *
+     * @param string $answerId ID ответа
+     * @param int $sku SKU товара
+     * @return array
+     */
+    public function deleteQuestionAnswer(string $answerId, int $sku): array
+    {
+        try {
+            $this->request('POST', '/v1/question/answer/delete', [
+                'answer_id' => $answerId,
+                'sku' => $sku
+            ]);
+
+            return ['success' => true];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить список ответов на вопрос
+     * POST /v1/question/answer/list
+     *
+     * @param string $questionId ID вопроса
+     * @param int $sku SKU товара
+     * @param string $lastId ID последнего ответа для пагинации
+     * @return array
+     */
+    public function getQuestionAnswers(string $questionId, int $sku, string $lastId = ''): array
+    {
+        try {
+            $response = $this->request('POST', '/v1/question/answer/list', [
+                'question_id' => $questionId,
+                'sku' => $sku,
+                'last_id' => $lastId
+            ]);
+
+            return [
+                'success' => true,
+                'answers' => $response['answers'] ?? [],
+                'last_id' => $response['last_id'] ?? ''
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'answers' => []
+            ];
+        }
+    }
+
+    /**
+     * Изменить статус вопросов
+     * POST /v1/question/change-status
+     *
+     * @param array $questionIds Массив ID вопросов
+     * @param string $status NEW|VIEWED|PROCESSED
+     * @return array
+     */
+    public function changeQuestionsStatus(array $questionIds, string $status): array
+    {
+        if (empty($questionIds)) {
+            return ['success' => false, 'error' => 'Не указаны ID вопросов'];
+        }
+
+        try {
+            $this->request('POST', '/v1/question/change-status', [
+                'question_ids' => $questionIds,
+                'status' => $status
+            ]);
+
+            return ['success' => true];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
     }
 }

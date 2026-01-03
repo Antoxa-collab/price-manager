@@ -365,6 +365,166 @@ class Database
                     KEY `idx_created_at` (`created_at`),
                     KEY `idx_status` (`status`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+
+            'user_api_keys' => "
+                CREATE TABLE IF NOT EXISTS `user_api_keys` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `user_id` INT UNSIGNED NOT NULL,
+                    `service` VARCHAR(50) NOT NULL COMMENT 'Сервис (claude, openai, etc)',
+                    `api_key` TEXT NOT NULL,
+                    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_user_service` (`user_id`, `service`),
+                    KEY `idx_service` (`service`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+
+            // AI Assistant tables
+            'ai_prompts' => "
+                CREATE TABLE IF NOT EXISTS `ai_prompts` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `marketplace` ENUM('ozon', 'wildberries', 'yandex') NOT NULL DEFAULT 'ozon',
+                    `type` ENUM('review', 'question') NOT NULL DEFAULT 'review',
+                    `sentiment` ENUM('positive', 'negative', 'neutral') NULL COMMENT 'Для отзывов: тональность',
+                    `name` VARCHAR(100) NOT NULL COMMENT 'Название промпта',
+                    `system_prompt` TEXT NOT NULL COMMENT 'Системный промпт',
+                    `user_prompt_template` TEXT NOT NULL COMMENT 'Шаблон пользовательского промпта',
+                    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                    `is_default` TINYINT(1) NOT NULL DEFAULT 0,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_marketplace_type` (`marketplace`, `type`),
+                    KEY `idx_sentiment` (`sentiment`),
+                    KEY `idx_active` (`is_active`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_examples' => "
+                CREATE TABLE IF NOT EXISTS `ai_examples` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `prompt_id` INT UNSIGNED NOT NULL,
+                    `input_text` TEXT NOT NULL COMMENT 'Пример входящего текста (отзыв/вопрос)',
+                    `output_text` TEXT NOT NULL COMMENT 'Пример ответа',
+                    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_prompt` (`prompt_id`),
+                    KEY `idx_active` (`is_active`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_product_knowledge' => "
+                CREATE TABLE IF NOT EXISTS `ai_product_knowledge` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `product_id` INT UNSIGNED NULL COMMENT 'Ссылка на наш товар (NULL = глобальное знание)',
+                    `marketplace_product_id` VARCHAR(100) NULL COMMENT 'ID товара на маркетплейсе',
+                    `knowledge_type` ENUM('description', 'faq', 'specs', 'note') NOT NULL DEFAULT 'note',
+                    `title` VARCHAR(255) NULL,
+                    `content` TEXT NOT NULL COMMENT 'Информация о товаре для AI',
+                    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_product` (`product_id`),
+                    KEY `idx_marketplace_product` (`marketplace_product_id`),
+                    KEY `idx_type` (`knowledge_type`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_reviews' => "
+                CREATE TABLE IF NOT EXISTS `ai_reviews` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `marketplace` ENUM('ozon', 'wildberries', 'yandex') NOT NULL DEFAULT 'ozon',
+                    `marketplace_review_id` VARCHAR(100) NOT NULL COMMENT 'ID отзыва на маркетплейсе',
+                    `marketplace_product_id` VARCHAR(100) NULL,
+                    `product_id` INT UNSIGNED NULL COMMENT 'Наш product_id',
+                    `author_name` VARCHAR(255) NULL,
+                    `rating` TINYINT UNSIGNED NULL COMMENT 'Оценка 1-5',
+                    `review_text` TEXT NULL COMMENT 'Текст отзыва',
+                    `review_pros` TEXT NULL COMMENT 'Достоинства',
+                    `review_cons` TEXT NULL COMMENT 'Недостатки',
+                    `review_date` DATETIME NULL,
+                    `status` ENUM('new', 'generating', 'generated', 'approved', 'sent', 'skipped', 'error') NOT NULL DEFAULT 'new',
+                    `generated_response` TEXT NULL COMMENT 'Сгенерированный ответ',
+                    `edited_response` TEXT NULL COMMENT 'Отредактированный ответ',
+                    `sent_response` TEXT NULL COMMENT 'Отправленный ответ',
+                    `sent_at` DATETIME NULL,
+                    `error_message` TEXT NULL,
+                    `prompt_id` INT UNSIGNED NULL COMMENT 'Какой промпт использовался',
+                    `tokens_used` INT UNSIGNED NULL,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_review` (`marketplace`, `marketplace_review_id`),
+                    KEY `idx_status` (`status`),
+                    KEY `idx_marketplace_product` (`marketplace_product_id`),
+                    KEY `idx_product` (`product_id`),
+                    KEY `idx_rating` (`rating`),
+                    KEY `idx_date` (`review_date`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_questions' => "
+                CREATE TABLE IF NOT EXISTS `ai_questions` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `marketplace` ENUM('ozon', 'wildberries', 'yandex') NOT NULL DEFAULT 'ozon',
+                    `marketplace_question_id` VARCHAR(100) NOT NULL COMMENT 'ID вопроса на маркетплейсе',
+                    `marketplace_product_id` VARCHAR(100) NULL,
+                    `product_id` INT UNSIGNED NULL COMMENT 'Наш product_id',
+                    `author_name` VARCHAR(255) NULL,
+                    `question_text` TEXT NOT NULL,
+                    `question_date` DATETIME NULL,
+                    `status` ENUM('new', 'generating', 'generated', 'approved', 'sent', 'skipped', 'error') NOT NULL DEFAULT 'new',
+                    `generated_response` TEXT NULL,
+                    `edited_response` TEXT NULL,
+                    `sent_response` TEXT NULL,
+                    `sent_at` DATETIME NULL,
+                    `error_message` TEXT NULL,
+                    `prompt_id` INT UNSIGNED NULL,
+                    `tokens_used` INT UNSIGNED NULL,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_question` (`marketplace`, `marketplace_question_id`),
+                    KEY `idx_status` (`status`),
+                    KEY `idx_marketplace_product` (`marketplace_product_id`),
+                    KEY `idx_product` (`product_id`),
+                    KEY `idx_date` (`question_date`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_settings' => "
+                CREATE TABLE IF NOT EXISTS `ai_settings` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `setting_key` VARCHAR(100) NOT NULL,
+                    `setting_value` TEXT NULL,
+                    `marketplace` ENUM('ozon', 'wildberries', 'yandex', 'all') NOT NULL DEFAULT 'all',
+                    `description` VARCHAR(255) NULL,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_setting` (`setting_key`, `marketplace`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ",
+            'ai_generation_log' => "
+                CREATE TABLE IF NOT EXISTS `ai_generation_log` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `type` ENUM('review', 'question') NOT NULL,
+                    `item_id` INT UNSIGNED NOT NULL COMMENT 'ID из ai_reviews или ai_questions',
+                    `prompt_id` INT UNSIGNED NULL,
+                    `model` VARCHAR(100) NULL COMMENT 'Модель Claude',
+                    `input_tokens` INT UNSIGNED NULL,
+                    `output_tokens` INT UNSIGNED NULL,
+                    `total_tokens` INT UNSIGNED NULL,
+                    `generation_time_ms` INT UNSIGNED NULL,
+                    `status` ENUM('success', 'error') NOT NULL DEFAULT 'success',
+                    `error_message` TEXT NULL,
+                    `request_data` JSON NULL COMMENT 'Отправленный запрос (для отладки)',
+                    `response_data` JSON NULL COMMENT 'Полный ответ API',
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_type_item` (`type`, `item_id`),
+                    KEY `idx_status` (`status`),
+                    KEY `idx_created` (`created_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             "
         ];
 
@@ -381,6 +541,12 @@ class Database
 
         // Добавляем недостающие колонки в product_mappings
         $this->ensureMappingColumns();
+
+        // Добавляем недостающие колонки в AI таблицы
+        $this->ensureAIColumns();
+
+        // Добавляем few-shot примеры для WB промптов
+        $this->ensureFewShotExamples();
     }
 
     /**
@@ -479,5 +645,126 @@ class Database
     public function lastInsertId(): int
     {
         return (int)$this->pdo->lastInsertId();
+    }
+
+    /**
+     * Проверить и добавить недостающие колонки в AI таблицы (ai_reviews, ai_questions)
+     * Добавлены для синхронизации с Ozon API
+     */
+    private function ensureAIColumns(): void
+    {
+        // ===== ai_reviews =====
+        try {
+            $result = $this->pdo->query("SHOW TABLES LIKE 'ai_reviews'")->fetch();
+            if ($result) {
+                $columns = $this->pdo->query("SHOW COLUMNS FROM ai_reviews")->fetchAll(PDO::FETCH_COLUMN);
+
+                // user_id не добавляем - система однопользовательская
+                $columnsToAdd = [
+                    'ozon_status' => "ALTER TABLE ai_reviews ADD COLUMN `ozon_status` VARCHAR(20) NULL COMMENT 'Статус на Ozon: PROCESSED/UNPROCESSED' AFTER `review_date`",
+                    'comments_amount' => "ALTER TABLE ai_reviews ADD COLUMN `comments_amount` INT DEFAULT 0 COMMENT 'Количество комментариев на Ozon' AFTER `ozon_status`",
+                    'ozon_comment_id' => "ALTER TABLE ai_reviews ADD COLUMN `ozon_comment_id` VARCHAR(100) NULL COMMENT 'ID нашего комментария на Ozon' AFTER `sent_at`"
+                ];
+
+                foreach ($columnsToAdd as $column => $sql) {
+                    if (!in_array($column, $columns)) {
+                        try {
+                            $this->pdo->exec($sql);
+                        } catch (PDOException $e) {
+                            error_log("Ошибка добавления колонки ai_reviews.{$column}: " . $e->getMessage());
+                        }
+                    }
+                }
+
+            }
+        } catch (PDOException $e) {
+            error_log("Ошибка обновления ai_reviews: " . $e->getMessage());
+        }
+
+        // ===== ai_questions =====
+        try {
+            $result = $this->pdo->query("SHOW TABLES LIKE 'ai_questions'")->fetch();
+            if ($result) {
+                $columns = $this->pdo->query("SHOW COLUMNS FROM ai_questions")->fetchAll(PDO::FETCH_COLUMN);
+
+                // user_id не добавляем - система однопользовательская
+                $columnsToAdd = [
+                    'ozon_status' => "ALTER TABLE ai_questions ADD COLUMN `ozon_status` VARCHAR(20) NULL COMMENT 'Статус на Ozon: NEW/VIEWED/PROCESSED' AFTER `question_date`",
+                    'answers_count' => "ALTER TABLE ai_questions ADD COLUMN `answers_count` INT DEFAULT 0 COMMENT 'Количество ответов на Ozon' AFTER `ozon_status`",
+                    'ozon_answer_id' => "ALTER TABLE ai_questions ADD COLUMN `ozon_answer_id` VARCHAR(100) NULL COMMENT 'ID нашего ответа на Ozon' AFTER `sent_at`"
+                ];
+
+                foreach ($columnsToAdd as $column => $sql) {
+                    if (!in_array($column, $columns)) {
+                        try {
+                            $this->pdo->exec($sql);
+                        } catch (PDOException $e) {
+                            error_log("Ошибка добавления колонки ai_questions.{$column}: " . $e->getMessage());
+                        }
+                    }
+                }
+
+            }
+        } catch (PDOException $e) {
+            error_log("Ошибка обновления ai_questions: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Добавить few-shot примеры для WB промптов
+     */
+    private function ensureFewShotExamples(): void
+    {
+        try {
+            // Проверяем, есть ли уже примеры для WB
+            $count = $this->pdo->query(
+                "SELECT COUNT(*) FROM ai_examples e
+                 JOIN ai_prompts p ON e.prompt_id = p.id
+                 WHERE p.marketplace = 'wildberries'"
+            )->fetchColumn();
+
+            if ($count > 0) {
+                return; // Примеры уже есть
+            }
+
+            // Примеры для каждого типа промпта
+            $examples = [
+                'Ответ на положительный отзыв WB' => [
+                    ['Отзыв: Отличная фанера, ровная, без сучков. Использовал для полок в гараже - идеально подошла. Буду заказывать ещё!', 'Благодарим за отзыв! Рады, что фанера подошла для ваших полок. Будем рады видеть вас снова!'],
+                    ['Отзыв: Хорошее качество за эту цену. Доставили быстро, упаковано надёжно.', 'Спасибо за оценку! Стараемся поддерживать баланс качества и цены. Надёжная упаковка — наш приоритет при доставке.'],
+                    ['Отзыв: Супер! Заказываю уже третий раз, всегда отличное качество.', 'Благодарим за доверие и постоянство! Приятно, что качество соответствует вашим ожиданиям.']
+                ],
+                'Ответ на негативный отзыв WB' => [
+                    ['Отзыв: Пришла фанера с трещиной на углу. Очень расстроен, пришлось отпиливать часть.', 'Приносим извинения за доставленное неудобство. Повреждение могло произойти при транспортировке. Пожалуйста, свяжитесь с нами — поможем решить вопрос.'],
+                    ['Отзыв: Размеры не соответствуют заявленным, на 2 см меньше.', 'Благодарим за обратную связь. Допуск по ГОСТ составляет ±3мм. Если расхождение больше — готовы рассмотреть замену. Напишите нам для уточнения.']
+                ],
+                'Ответ на нейтральный отзыв WB' => [
+                    ['Отзыв: Нормальная фанера, ничего особенного. Для дачи сойдёт.', 'Спасибо за отзыв! Рады, что товар подошёл для ваших задач.'],
+                    ['Отзыв: Качество среднее, но за такую цену ожидал большего.', 'Благодарим за обратную связь. Учтём ваше мнение. Если есть конкретные пожелания — будем рады услышать.']
+                ],
+                'Ответ на вопрос WB' => [
+                    ['Вопрос: Подойдёт ли эта фанера для пола в ванной комнате?', 'Для ванной рекомендуем влагостойкую фанеру марки ФСФ. Данный товар — марки ФК, подходит для сухих помещений. Посмотрите раздел "Влагостойкая фанера" в нашем каталоге.'],
+                    ['Вопрос: Какой максимальный вес выдерживает полка из этой фанеры?', 'Несущая способность зависит от толщины и пролёта полки. Фанера 18мм при пролёте 60см выдерживает до 30кг. Для больших нагрузок рекомендуем увеличить толщину или добавить рёбра жёсткости.'],
+                    ['Вопрос: Есть ли у вас фанера толщиной 6мм?', 'Да, фанера 6мм есть в наличии. Найдите её в нашем каталоге по фильтру "толщина". Если нужна помощь с выбором — напишите.']
+                ]
+            ];
+
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO ai_examples (prompt_id, input_text, output_text, is_active, created_at)
+                 SELECT id, ?, ?, 1, NOW()
+                 FROM ai_prompts
+                 WHERE name = ? AND marketplace = 'wildberries'"
+            );
+
+            foreach ($examples as $promptName => $exampleList) {
+                foreach ($exampleList as $example) {
+                    $stmt->execute([$example[0], $example[1], $promptName]);
+                }
+            }
+
+            error_log("[Database] Добавлены few-shot примеры для WB промптов");
+        } catch (PDOException $e) {
+            error_log("Ошибка добавления few-shot примеров: " . $e->getMessage());
+        }
     }
 }

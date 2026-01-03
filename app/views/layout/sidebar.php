@@ -23,17 +23,20 @@
                 </a>
             </div>
 
-            <!-- Wildberries - скоро -->
-            <div class="nav-item-group disabled-group">
-                <div class="nav-group-header px-3 py-2 d-flex align-items-center text-muted">
-                    <i class="bi bi-circle-fill me-2" style="font-size: 0.5rem;"></i>
+            <!-- Wildberries - активный -->
+            <div class="nav-item-group">
+                <div class="nav-group-header px-3 py-2 d-flex align-items-center">
+                    <i class="bi bi-circle-fill text-danger me-2" style="font-size: 0.5rem;"></i>
                     <span class="fw-medium">Wildberries</span>
-                    <span class="badge bg-secondary ms-auto small">скоро</span>
                 </div>
-                <span class="nav-link nav-link-sub disabled text-muted">
+                <a class="nav-link nav-link-sub <?= isActive('/wildberries') ?>" href="/wildberries">
                     <i class="bi bi-calculator"></i>
                     <span>Калькулятор цен</span>
-                </span>
+                </a>
+                <a class="nav-link nav-link-sub <?= isActive('/wildberries/mapping') ?>" href="/wildberries/mapping">
+                    <i class="bi bi-link-45deg"></i>
+                    <span>Сопоставление товаров</span>
+                </a>
             </div>
 
             <!-- Яндекс.Маркет - скоро -->
@@ -48,6 +51,28 @@
                     <span>Калькулятор цен</span>
                 </span>
             </div>
+
+            <hr class="my-2 border-secondary">
+
+            <!-- Раздел: AI Помощник -->
+            <div class="sidebar-heading text-muted small px-3 py-2 text-uppercase">
+                <i class="bi bi-robot me-1"></i>AI Помощник
+            </div>
+
+            <a class="nav-link <?= isActive('/ai/reviews') || isActive('/ai') ?>" href="/ai/reviews">
+                <i class="bi bi-chat-left-text"></i>
+                <span>Отзывы</span>
+            </a>
+
+            <a class="nav-link <?= isActive('/ai/questions') ?>" href="/ai/questions">
+                <i class="bi bi-question-circle"></i>
+                <span>Вопросы</span>
+            </a>
+
+            <a class="nav-link <?= isActive('/ai/prompts') ?>" href="/ai/prompts">
+                <i class="bi bi-file-text"></i>
+                <span>Промпты</span>
+            </a>
 
             <hr class="my-2 border-secondary">
 
@@ -122,8 +147,13 @@
             </div>
 
             <div class="d-flex align-items-center mb-1">
-                <span class="status-dot <?= $wbConfigured ? 'bg-success' : 'bg-secondary' ?> me-2"></span>
-                <span class="small text-muted">Wildberries</span>
+                <span class="status-dot <?= $wbConfigured ? 'bg-success' : 'bg-danger' ?> me-2"></span>
+                <span class="small">Wildberries</span>
+                <?php if ($wbConfigured): ?>
+                <i class="bi bi-check-circle-fill text-success ms-auto small"></i>
+                <?php else: ?>
+                <i class="bi bi-x-circle-fill text-danger ms-auto small"></i>
+                <?php endif; ?>
             </div>
 
             <div class="d-flex align-items-center">

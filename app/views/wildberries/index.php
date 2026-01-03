@@ -1,10 +1,10 @@
 <?php
 /**
- * Калькулятор цен Ozon
+ * Калькулятор цен Wildberries
  * Расчёт и загрузка цен на маркетплейс
  */
-$pageTitle = 'Калькулятор цен Ozon';
-$pageScript = 'ozon-calculator';
+$pageTitle = 'Калькулятор цен Wildberries';
+$pageScript = 'wb-calculator';
 include VIEWS_PATH . '/layout/header.php';
 ?>
 
@@ -13,13 +13,33 @@ include VIEWS_PATH . '/layout/header.php';
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <h4 class="mb-0">
-                <i class="bi bi-calculator me-2 text-info"></i>
-                <span class="hide-mobile">Калькулятор цен Ozon</span>
-                <span class="show-mobile d-none">Калькулятор Ozon</span>
+                <i class="bi bi-calculator me-2 text-danger"></i>
+                <span class="hide-mobile">Калькулятор цен Wildberries</span>
+                <span class="show-mobile d-none">Калькулятор WB</span>
             </h4>
-            <a href="/ozon/mapping" class="btn btn-outline-secondary">
-                <i class="bi bi-link-45deg"></i><span class="hide-mobile ms-1">Сопоставления</span>
-            </a>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-secondary" id="syncWbBtn">
+                    <i class="bi bi-arrow-repeat"></i><span class="hide-mobile ms-1">Синхронизация</span>
+                </button>
+                <a href="/wildberries/mapping" class="btn btn-outline-secondary">
+                    <i class="bi bi-link-45deg"></i><span class="hide-mobile ms-1">Сопоставления</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Статистика синхронизации -->
+<div class="row mb-4 d-none" id="syncStatsRow">
+    <div class="col-12">
+        <div class="alert alert-info mb-0">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-info-circle me-2"></i>
+                    <span id="syncStatsText">Товаров в кэше: 0 | Сопоставлено: 0</span>
+                </div>
+                <small class="text-muted" id="lastSyncTime"></small>
+            </div>
         </div>
     </div>
 </div>
@@ -41,7 +61,7 @@ include VIEWS_PATH . '/layout/header.php';
                     <option value="">Выберите товар...</option>
                 </select>
                 <div class="form-text" id="productInfo">
-                    Выберите товар с привязанными артикулами Ozon
+                    Выберите товар с привязанными артикулами WB
                 </div>
             </div>
 
@@ -49,7 +69,7 @@ include VIEWS_PATH . '/layout/header.php';
             <div class="col-md-2">
                 <label for="markupMin" class="form-label">
                     Наценка мин. (%)
-                    <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" title="Наценка для минимальной цены, ниже которой товар не продаётся"></i>
+                    <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" title="Наценка для минимальной цены"></i>
                 </label>
                 <div class="input-group">
                     <input type="number" class="form-control" id="markupMin" min="0" max="1000" step="0.1" value="20">
@@ -57,14 +77,14 @@ include VIEWS_PATH . '/layout/header.php';
                 </div>
             </div>
 
-            <!-- Дополнительная наценка для вашей цены -->
+            <!-- Скидка WB -->
             <div class="col-md-2">
-                <label for="markupYour" class="form-label">
-                    Доп. наценка (%)
-                    <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" title="Дополнительная наценка поверх минимальной для 'Вашей цены'"></i>
+                <label for="wbDiscount" class="form-label">
+                    Скидка WB (%)
+                    <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" title="Скидка, которая будет отображаться на WB"></i>
                 </label>
                 <div class="input-group">
-                    <input type="number" class="form-control" id="markupYour" min="0" max="1000" step="0.1" value="5">
+                    <input type="number" class="form-control" id="wbDiscount" min="0" max="95" step="1" value="0">
                     <span class="input-group-text">%</span>
                 </div>
             </div>
@@ -75,17 +95,17 @@ include VIEWS_PATH . '/layout/header.php';
                     <button type="button" class="btn btn-primary" id="recalculateBtn" disabled title="Пересчитать цены">
                         <i class="bi bi-calculator me-1"></i> Пересчитать
                     </button>
-                    <button type="button" class="btn btn-outline-info" id="autoFillBtn" disabled title="Автоматически определить кусочков из листа и количество из названий артикулов Ozon">
-                        <i class="bi bi-magic me-1"></i> Автозаполнить
+                    <button type="button" class="btn btn-outline-info" id="autoFillBtn" disabled title="Автозаполнение из артикулов">
+                        <i class="bi bi-magic me-1"></i> Авто
                     </button>
-                    <button type="button" class="btn btn-outline-secondary" id="saveMarkupsBtn" disabled title="Сохранить наценки">
+                    <button type="button" class="btn btn-outline-secondary" id="saveMarkupsBtn" disabled title="Сохранить настройки">
                         <i class="bi bi-save me-1"></i> Сохранить
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- Блок с расчётными ценами - современный дизайн -->
+        <!-- Блок с расчётными ценами -->
         <div class="row mt-4 g-3 d-none" id="calculatedPricesBlock">
             <div class="col-md-3">
                 <div class="metric-card metric-cost">
@@ -102,13 +122,13 @@ include VIEWS_PATH . '/layout/header.php';
             <div class="col-md-3">
                 <div class="metric-card metric-min">
                     <div class="metric-value" id="calcMinPrice">-</div>
-                    <div class="metric-label">Минимальная цена</div>
+                    <div class="metric-label">Цена до скидки</div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="metric-card metric-your">
-                    <div class="metric-value" id="calcYourPrice">-</div>
-                    <div class="metric-label">Ваша цена</div>
+                    <div class="metric-value" id="calcFinalPrice">-</div>
+                    <div class="metric-label">Цена после скидки</div>
                 </div>
             </div>
         </div>
@@ -123,7 +143,13 @@ include VIEWS_PATH . '/layout/header.php';
     <div class="card-body">
         <div class="row align-items-end g-3">
             <div class="col-auto">
-                <label class="form-label">Остатки для выбранных</label>
+                <label class="form-label">Склад WB</label>
+                <select class="form-select" id="warehouseSelect" style="width: 200px">
+                    <option value="">Загрузка...</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">Остатки</label>
                 <input type="number" class="form-control" id="bulkStock"
                        value="0" min="0" style="width: 120px">
             </div>
@@ -139,19 +165,19 @@ include VIEWS_PATH . '/layout/header.php';
             </div>
             <div class="col-auto">
                 <button type="button" class="btn btn-outline-danger" id="zeroStockBtn">
-                    <i class="bi bi-x-circle me-1"></i>Обнулить все
+                    <i class="bi bi-x-circle me-1"></i>Обнулить
                 </button>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Таблица привязанных артикулов Ozon -->
+<!-- Таблица привязанных артикулов WB -->
 <div class="card bg-dark border-secondary mb-4">
     <div class="card-header border-secondary d-flex justify-content-between align-items-center">
         <div>
             <i class="bi bi-list-ul me-2"></i>
-            Привязанные артикулы Ozon
+            Привязанные артикулы Wildberries
             <span class="badge bg-secondary ms-2" id="articlesCount">0</span>
         </div>
         <div class="d-none" id="tableActions">
@@ -169,19 +195,19 @@ include VIEWS_PATH . '/layout/header.php';
                         <th style="width: 40px;">
                             <input type="checkbox" class="form-check-input" id="selectAllCheckbox" title="Выбрать все">
                         </th>
-                        <th>Артикул Ozon</th>
-                        <th>Название на Ozon</th>
+                        <th>Артикул WB</th>
+                        <th>Название</th>
                         <th class="text-center" style="width: 100px;">Из листа/Упак.</th>
                         <th class="text-end" style="width: 130px;">
-                            <span class="text-warning">Мин. цена</span>
+                            <span class="text-warning">Цена</span>
                         </th>
-                        <th class="text-end" style="width: 130px;">
-                            <span class="text-info">Ваша цена</span>
+                        <th class="text-end" style="width: 80px;">
+                            <span class="text-info">Скидка</span>
                         </th>
-                        <th class="text-end" style="width: 130px;">На Ozon</th>
+                        <th class="text-end" style="width: 130px;">На WB</th>
                         <th class="text-center" style="width: 100px;">Остатки</th>
                         <th class="text-center" style="width: 80px;">Статус</th>
-                        <th class="text-center" style="width: 60px;">Действия</th>
+                        <th class="text-center" style="width: 60px;"></th>
                     </tr>
                 </thead>
                 <tbody id="articlesTableBody">
@@ -202,12 +228,12 @@ include VIEWS_PATH . '/layout/header.php';
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div class="d-flex gap-2 flex-wrap w-100 w-md-auto">
-                <button type="button" class="btn btn-success flex-grow-1 flex-md-grow-0" id="uploadSelectedBtn" disabled>
+                <button type="button" class="btn btn-danger flex-grow-1 flex-md-grow-0" id="uploadSelectedBtn" disabled>
                     <i class="bi bi-cloud-upload me-1"></i>
-                    <span class="hide-mobile">Загрузить выбранные на Ozon</span>
+                    <span class="hide-mobile">Загрузить выбранные на WB</span>
                     <span class="show-mobile d-none">Выбранные</span>
                 </button>
-                <button type="button" class="btn btn-outline-success flex-grow-1 flex-md-grow-0" id="uploadAllBtn" disabled>
+                <button type="button" class="btn btn-outline-danger flex-grow-1 flex-md-grow-0" id="uploadAllBtn" disabled>
                     <i class="bi bi-cloud-upload-fill me-1"></i>
                     <span class="hide-mobile">Загрузить все артикулы товара</span>
                     <span class="show-mobile d-none">Все</span>
@@ -220,13 +246,13 @@ include VIEWS_PATH . '/layout/header.php';
             </div>
             <div class="text-muted small hide-mobile">
                 <i class="bi bi-info-circle me-1"></i>
-                Цены загружаются с проверкой min_price &lt; price
+                Цены загружаются с указанной скидкой
             </div>
         </div>
     </div>
 </div>
 
-<!-- Результаты последней загрузки -->
+<!-- Результаты загрузки -->
 <div class="card bg-dark border-secondary d-none" id="uploadResultsCard">
     <div class="card-header border-secondary">
         <i class="bi bi-journal-check me-2"></i>
@@ -234,7 +260,6 @@ include VIEWS_PATH . '/layout/header.php';
     </div>
     <div class="card-body">
         <div class="row g-3" id="uploadResultsContent">
-            <!-- Динамически заполняется -->
         </div>
     </div>
 </div>
@@ -249,6 +274,7 @@ include VIEWS_PATH . '/layout/header.php';
             </div>
             <div class="modal-body">
                 <input type="hidden" id="editPackMappingId">
+                <input type="hidden" id="editPackNmId">
 
                 <div class="row">
                     <div class="col-6">
@@ -262,7 +288,7 @@ include VIEWS_PATH . '/layout/header.php';
                         <div class="mb-3">
                             <label class="form-label">В упаковке (шт)</label>
                             <input type="number" class="form-control" id="editQuantityInPack" min="1" value="1">
-                            <div class="form-text">Сколько штук в карточке на Ozon</div>
+                            <div class="form-text">Сколько штук в карточке на WB</div>
                         </div>
                     </div>
                 </div>
@@ -275,6 +301,37 @@ include VIEWS_PATH . '/layout/header.php';
             <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
                 <button type="button" class="btn btn-primary" id="savePackBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно синхронизации -->
+<div class="modal fade" id="syncModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen-sm-down">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat me-2"></i>Синхронизация с Wildberries</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center py-4">
+                <div id="syncModalLoading">
+                    <div class="spinner-border text-danger mb-3" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mb-0">Синхронизация товаров и цен...</p>
+                </div>
+                <div id="syncModalResult" class="d-none">
+                    <i class="bi bi-check-circle-fill text-success display-4"></i>
+                    <p class="mt-3 mb-0" id="syncResultText"></p>
+                </div>
+                <div id="syncModalError" class="d-none">
+                    <i class="bi bi-x-circle-fill text-danger display-4"></i>
+                    <p class="mt-3 mb-0 text-danger" id="syncErrorText"></p>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary d-none" id="syncModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
             </div>
         </div>
     </div>

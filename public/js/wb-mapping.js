@@ -1,17 +1,17 @@
 /**
- * Price Manager - Сопоставление товаров Ozon
+ * Price Manager - Сопоставление товаров Wildberries
  * 3-шаговый интерфейс: Загрузка -> Сопоставление -> Просмотр
  */
 
-const OzonMapping = {
+const WBMapping = {
     // Данные
     ourProducts: [],
-    ozonProducts: [],
+    wbProducts: [],
     mappings: [],
 
     // Выбранные элементы
     selectedOurProduct: null,
-    selectedOzonProduct: null,
+    selectedWbProduct: null,
 
     // Текущий шаг (1, 2, 3)
     currentStep: 1,
@@ -32,7 +32,7 @@ const OzonMapping = {
      */
     bindEvents() {
         // === Шаг 1: Загрузка ===
-        document.getElementById('syncOzonBtn')?.addEventListener('click', () => this.syncFromOzon());
+        document.getElementById('syncWbBtn')?.addEventListener('click', () => this.syncFromWB());
         document.getElementById('skipToStep2Btn')?.addEventListener('click', () => this.goToStep(2));
 
         // === Шаг 2: Сопоставление ===
@@ -43,12 +43,12 @@ const OzonMapping = {
         // Поиск товаров
         document.getElementById('searchOurProducts')?.addEventListener('input',
             App.debounce(() => this.renderOurProducts(), 300));
-        document.getElementById('searchOzonProducts')?.addEventListener('input',
-            App.debounce(() => this.renderOzonProducts(), 300));
+        document.getElementById('searchWbProducts')?.addEventListener('input',
+            App.debounce(() => this.renderWbProducts(), 300));
 
-        // Фильтр товаров Ozon
-        document.querySelectorAll('input[name="ozonFilter"]').forEach(radio => {
-            radio.addEventListener('change', () => this.renderOzonProducts());
+        // Фильтр товаров WB
+        document.querySelectorAll('input[name="wbFilter"]').forEach(radio => {
+            radio.addEventListener('change', () => this.renderWbProducts());
         });
 
         // Добавление товара
@@ -70,17 +70,17 @@ const OzonMapping = {
     async checkInitialState() {
         try {
             // Загружаем информацию о кэше
-            const cacheInfo = await App.fetch('/api/ozon/cache-info');
+            const data = await App.fetch('/api/wb/products?limit=1');
 
-            if (cacheInfo.count > 0) {
+            if (data.stats && data.stats.total_products > 0) {
                 // Есть кэшированные товары - показываем кнопку пропуска
                 document.getElementById('skipStep1')?.classList.remove('d-none');
-                document.getElementById('cachedProductsCount').textContent = cacheInfo.count;
+                document.getElementById('cachedProductsCount').textContent = data.stats.total_products;
 
                 // Показываем время последней синхронизации
-                if (cacheInfo.last_sync) {
-                    this.lastSyncTime = cacheInfo.last_sync;
-                    document.getElementById('syncTimeValue').textContent = this.formatSyncTime(cacheInfo.last_sync);
+                if (data.stats.last_sync) {
+                    this.lastSyncTime = data.stats.last_sync;
+                    document.getElementById('syncTimeValue').textContent = this.formatSyncTime(data.stats.last_sync);
                 }
             }
 
@@ -128,7 +128,6 @@ const OzonMapping = {
             // Добавляем нужные классы
             if (i < this.currentStep) {
                 indicator.classList.add('completed');
-                // Показываем галочку вместо номера
                 indicator.querySelector('.step-number')?.classList.add('d-none');
                 indicator.querySelector('.step-check')?.classList.remove('d-none');
             } else if (i === this.currentStep) {
@@ -148,7 +147,7 @@ const OzonMapping = {
     async loadStep2Data() {
         await Promise.all([
             this.loadOurProducts(),
-            this.loadOzonProducts()
+            this.loadWbProducts()
         ]);
     },
 
@@ -163,10 +162,10 @@ const OzonMapping = {
     },
 
     /**
-     * Синхронизация товаров с Ozon
+     * Синхронизация товаров с Wildberries
      */
-    async syncFromOzon() {
-        const syncBtn = document.getElementById('syncOzonBtn');
+    async syncFromWB() {
+        const syncBtn = document.getElementById('syncWbBtn');
         const progressDiv = document.getElementById('syncProgress');
         const progressText = document.getElementById('syncProgressText');
 
@@ -174,16 +173,17 @@ const OzonMapping = {
             // Показываем прогресс
             syncBtn.disabled = true;
             progressDiv?.classList.remove('d-none');
-            progressText.textContent = 'Подключение к Ozon...';
+            progressText.textContent = 'Подключение к Wildberries...';
 
-            const data = await App.fetch('/api/ozon/sync', {
+            const data = await App.fetch('/api/wb/sync-products', {
                 method: 'POST',
-                body: {}
+                body: {},
+                timeout: 120000
             });
 
             progressText.textContent = 'Синхронизация завершена!';
 
-            App.showToast(data.message || `Загружено ${data.count || 0} товаров`, 'success');
+            App.showToast(data.message || `Загружено ${data.synced || 0} товаров`, 'success');
 
             // Обновляем время синхронизации
             this.lastSyncTime = new Date().toISOString();
@@ -207,7 +207,7 @@ const OzonMapping = {
      */
     async loadOurProducts() {
         try {
-            const data = await App.fetch('/api/ozon/our-products');
+            const data = await App.fetch('/api/products');
             this.ourProducts = data.products || [];
             this.renderOurProducts();
         } catch (error) {
@@ -216,15 +216,15 @@ const OzonMapping = {
     },
 
     /**
-     * Загрузка товаров Ozon из кэша
+     * Загрузка товаров WB из кэша
      */
-    async loadOzonProducts() {
+    async loadWbProducts() {
         try {
-            const data = await App.fetch('/api/ozon/cached-products');
-            this.ozonProducts = data.products || [];
-            this.renderOzonProducts();
+            const data = await App.fetch('/api/wb/products');
+            this.wbProducts = data.products || [];
+            this.renderWbProducts();
         } catch (error) {
-            App.showToast('Ошибка загрузки товаров Ozon: ' + error.message, 'danger');
+            App.showToast('Ошибка загрузки товаров WB: ' + error.message, 'danger');
         }
     },
 
@@ -233,7 +233,7 @@ const OzonMapping = {
      */
     async loadMappings() {
         try {
-            const data = await App.fetch('/api/ozon/mappings');
+            const data = await App.fetch('/api/wb/mapping');
             this.mappings = data.mappings || [];
             this.renderMappings();
             document.getElementById('mappingsTotal').textContent = this.mappings.length;
@@ -247,14 +247,22 @@ const OzonMapping = {
      */
     async loadStatistics() {
         try {
-            const data = await App.fetch('/api/ozon/statistics');
+            const [productsData, mappingsData] = await Promise.all([
+                App.fetch('/api/products'),
+                App.fetch('/api/wb/products?limit=1')
+            ]);
 
-            document.getElementById('statOurProducts').textContent = data.total_our_products || 0;
-            document.getElementById('statOzonProducts').textContent = data.total_marketplace || 0;
-            document.getElementById('statMapped').textContent = data.mapped_marketplace || 0;
+            const ourCount = (productsData.products || []).length;
+            const wbCount = mappingsData.stats?.total_products || 0;
+            const mappedCount = mappingsData.stats?.mapped_count || 0;
 
-            if (data.mapping_percent) {
-                document.getElementById('statMappedPercent').textContent = `(${data.mapping_percent}%)`;
+            document.getElementById('statOurProducts').textContent = ourCount;
+            document.getElementById('statWbProducts').textContent = wbCount;
+            document.getElementById('statMapped').textContent = mappedCount;
+
+            if (wbCount > 0) {
+                const percent = Math.round((mappedCount / wbCount) * 100);
+                document.getElementById('statMappedPercent').textContent = `(${percent}%)`;
             }
         } catch (error) {
             console.error('Ошибка загрузки статистики:', error);
@@ -293,7 +301,6 @@ const OzonMapping = {
         }
 
         list.innerHTML = filtered.map(product => {
-            // Считаем количество сопоставлений для товара
             const mappingCount = this.getMappingCountForProduct(product.id);
 
             return `
@@ -334,21 +341,21 @@ const OzonMapping = {
     },
 
     /**
-     * Рендеринг списка товаров Ozon
+     * Рендеринг списка товаров WB
      */
-    renderOzonProducts() {
-        const list = document.getElementById('ozonProductsList');
+    renderWbProducts() {
+        const list = document.getElementById('wbProductsList');
         if (!list) return;
 
-        const searchTerm = (document.getElementById('searchOzonProducts')?.value || '').toLowerCase();
-        const filterValue = document.querySelector('input[name="ozonFilter"]:checked')?.value || 'all';
+        const searchTerm = (document.getElementById('searchWbProducts')?.value || '').toLowerCase();
+        const filterValue = document.querySelector('input[name="wbFilter"]:checked')?.value || 'all';
 
-        let filtered = this.ozonProducts.filter(p => {
-            // Поиск
+        let filtered = this.wbProducts.filter(p => {
+            // Поиск (title - название из кэша WB)
             if (searchTerm) {
-                const matches = (p.name || '').toLowerCase().includes(searchTerm) ||
-                               (p.offer_id || '').toLowerCase().includes(searchTerm) ||
-                               (p.sku || '').toLowerCase().includes(searchTerm);
+                const matches = (p.title || p.name || '').toLowerCase().includes(searchTerm) ||
+                               (p.vendor_code || '').toLowerCase().includes(searchTerm) ||
+                               String(p.nm_id || '').includes(searchTerm);
                 if (!matches) return false;
             }
 
@@ -358,44 +365,53 @@ const OzonMapping = {
             return true;
         });
 
-        document.getElementById('ozonProductsCount').textContent = filtered.length;
+        document.getElementById('wbProductsCount').textContent = filtered.length;
 
         if (filtered.length === 0) {
             list.innerHTML = `
                 <div class="text-center text-muted py-4">
                     <i class="bi bi-cloud display-6"></i>
                     <p class="mt-2 mb-0">Нет товаров</p>
-                    <small>Синхронизируйте товары с Ozon</small>
+                    <small>Синхронизируйте товары с Wildberries</small>
                 </div>
             `;
             return;
         }
 
         list.innerHTML = filtered.map(product => {
-            // Формируем бейдж сопоставления с названием товара
+            // Название товара WB (в кэше поле называется title)
+            const wbProductName = product.title || product.name || '';
+
+            // Бейдж сопоставления с названием нашего товара
             let mappingBadge = '';
             if (product.is_mapped) {
-                const productName = product.our_product_name || '';
-                const truncatedName = productName.length > 30
-                    ? productName.substring(0, 30) + '...'
-                    : productName;
-                mappingBadge = `<span class="badge mapping-badge bg-success mt-1" title="${App.escapeHtml(productName)}">
-                    <i class="bi bi-link-45deg"></i> Сопоставлен${productName ? ': ' + App.escapeHtml(truncatedName) : ''}
-                </span>`;
+                const ourName = product.our_product_name || '';
+                const truncatedName = ourName.length > 25
+                    ? ourName.substring(0, 25) + '...'
+                    : ourName;
+                mappingBadge = `
+                    <div class="mapped-info mt-1">
+                        <span class="badge bg-success">
+                            <i class="bi bi-check-lg"></i> Сопоставлено
+                        </span>
+                        ${ourName ? `<div class="small text-success mt-1" title="${App.escapeHtml(ourName)}">
+                            <i class="bi bi-arrow-right"></i> ${App.escapeHtml(truncatedName)}
+                        </div>` : ''}
+                    </div>`;
             }
 
             return `
-                <a href="#" class="list-group-item list-group-item-action bg-dark text-white border-secondary ozon-product-item
+                <a href="#" class="list-group-item list-group-item-action bg-dark text-white border-secondary wb-product-item
                     ${product.is_mapped ? 'mapped' : ''}"
-                   data-id="${product.product_id}">
+                   data-id="${product.nm_id}">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1 me-2" style="max-width: 75%;">
-                            <strong class="text-truncate d-block">${App.escapeHtml(product.name || '')}</strong>
-                            <div class="small text-muted">${App.escapeHtml(product.offer_id || product.sku || '')}</div>
+                            <strong class="text-truncate d-block">${App.escapeHtml(wbProductName)}</strong>
+                            <div class="small text-muted">${App.escapeHtml(product.vendor_code || '')} | nmID: ${product.nm_id}</div>
                             ${mappingBadge}
                         </div>
                         <div class="text-end">
-                            <span class="badge bg-info">${App.formatPrice(product.price || 0)}</span>
+                            <span class="badge bg-danger">${App.formatPrice(product.price || 0)}</span>
                         </div>
                     </div>
                 </a>
@@ -403,10 +419,10 @@ const OzonMapping = {
         }).join('');
 
         // Привязываем события
-        list.querySelectorAll('.ozon-product-item').forEach(item => {
+        list.querySelectorAll('.wb-product-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 e.preventDefault();
-                this.selectOzonProduct(item.dataset.id);
+                this.selectWbProduct(item.dataset.id);
             });
         });
     },
@@ -424,8 +440,8 @@ const OzonMapping = {
         if (searchTerm) {
             filtered = this.mappings.filter(m =>
                 (m.name || '').toLowerCase().includes(searchTerm) ||
-                (m.marketplace_offer_id || '').toLowerCase().includes(searchTerm) ||
-                (m.marketplace_name || '').toLowerCase().includes(searchTerm)
+                (m.vendor_code || '').toLowerCase().includes(searchTerm) ||
+                (m.wb_name || '').toLowerCase().includes(searchTerm)
             );
         }
 
@@ -451,10 +467,11 @@ const OzonMapping = {
                     <br><small class="text-muted">${App.escapeHtml(mapping.sku || '')}</small>
                 </td>
                 <td>
-                    <code>${App.escapeHtml(mapping.marketplace_offer_id || mapping.marketplace_product_id || '')}</code>
+                    <code>${App.escapeHtml(mapping.vendor_code || '')}</code>
+                    <br><small class="text-muted">nmID: ${mapping.nm_id || ''}</small>
                 </td>
-                <td class="text-truncate" style="max-width: 250px;" title="${App.escapeHtml(mapping.marketplace_name || '')}">
-                    ${App.escapeHtml(mapping.marketplace_name || '-')}
+                <td class="text-truncate" style="max-width: 250px;" title="${App.escapeHtml(mapping.wb_name || '')}">
+                    ${App.escapeHtml(mapping.wb_name || '-')}
                 </td>
                 <td class="text-center">
                     <button class="btn btn-sm btn-outline-secondary edit-qty-btn"
@@ -462,7 +479,7 @@ const OzonMapping = {
                         ${mapping.quantity_in_pack || 1} шт.
                     </button>
                 </td>
-                <td class="text-end">${App.formatPrice(mapping.mp_price || 0)}</td>
+                <td class="text-end">${App.formatPrice(mapping.wb_price || 0)}</td>
                 <td class="text-center">
                     <button class="btn btn-sm btn-outline-danger delete-mapping-btn" data-id="${mapping.mapping_id}" title="Удалить сопоставление">
                         <i class="bi bi-trash"></i>
@@ -487,7 +504,6 @@ const OzonMapping = {
     selectOurProduct(id) {
         this.selectedOurProduct = this.ourProducts.find(p => String(p.id) === String(id)) || null;
 
-        // Обновляем визуальное выделение
         document.querySelectorAll('.our-product-item').forEach(item => {
             item.classList.toggle('active', item.dataset.id === id);
         });
@@ -497,13 +513,12 @@ const OzonMapping = {
     },
 
     /**
-     * Выбор товара Ozon
+     * Выбор товара WB
      */
-    selectOzonProduct(id) {
-        this.selectedOzonProduct = this.ozonProducts.find(p => String(p.product_id) === String(id)) || null;
+    selectWbProduct(id) {
+        this.selectedWbProduct = this.wbProducts.find(p => String(p.nm_id) === String(id)) || null;
 
-        // Обновляем визуальное выделение
-        document.querySelectorAll('.ozon-product-item').forEach(item => {
+        document.querySelectorAll('.wb-product-item').forEach(item => {
             item.classList.toggle('active', item.dataset.id === id);
         });
 
@@ -518,12 +533,12 @@ const OzonMapping = {
         const infoDiv = document.getElementById('selectedInfo');
         if (!infoDiv) return;
 
-        if (this.selectedOurProduct || this.selectedOzonProduct) {
+        if (this.selectedOurProduct || this.selectedWbProduct) {
             infoDiv.classList.remove('d-none');
             document.getElementById('selectedOurProduct').textContent =
                 this.selectedOurProduct ? this.selectedOurProduct.name : '-';
-            document.getElementById('selectedOzonProduct').textContent =
-                this.selectedOzonProduct ? this.selectedOzonProduct.name : '-';
+            document.getElementById('selectedWbProduct').textContent =
+                this.selectedWbProduct ? (this.selectedWbProduct.title || this.selectedWbProduct.name || '-') : '-';
         } else {
             infoDiv.classList.add('d-none');
         }
@@ -536,11 +551,10 @@ const OzonMapping = {
         const btn = document.getElementById('createMappingBtn');
         if (!btn) return;
 
-        // Кнопка активна если выбраны оба товара и Ozon товар не сопоставлен
         btn.disabled = !(
             this.selectedOurProduct &&
-            this.selectedOzonProduct &&
-            !this.selectedOzonProduct.is_mapped
+            this.selectedWbProduct &&
+            !this.selectedWbProduct.is_mapped
         );
     },
 
@@ -548,28 +562,26 @@ const OzonMapping = {
      * Создание сопоставления
      */
     async createMapping() {
-        if (!this.selectedOurProduct || !this.selectedOzonProduct) return;
+        if (!this.selectedOurProduct || !this.selectedWbProduct) return;
 
         try {
-            const data = await App.fetch('/api/ozon/create-mapping', {
+            const data = await App.fetch('/api/wb/mapping', {
                 method: 'POST',
                 body: {
+                    action: 'create',
                     product_id: this.selectedOurProduct.id,
-                    marketplace_product_id: this.selectedOzonProduct.product_id,
-                    marketplace_sku: this.selectedOzonProduct.sku,
-                    marketplace_offer_id: this.selectedOzonProduct.offer_id,
-                    marketplace_name: this.selectedOzonProduct.name
+                    nm_id: this.selectedWbProduct.nm_id
                 }
             });
 
             App.showToast(data.message || 'Сопоставление создано', 'success');
 
             // Обновляем флаг сопоставления в локальных данных
-            const ozonProduct = this.ozonProducts.find(p =>
-                String(p.product_id) === String(this.selectedOzonProduct.product_id)
+            const wbProduct = this.wbProducts.find(p =>
+                String(p.nm_id) === String(this.selectedWbProduct.nm_id)
             );
-            if (ozonProduct) {
-                ozonProduct.is_mapped = true;
+            if (wbProduct) {
+                wbProduct.is_mapped = true;
             }
 
             // Перезагружаем сопоставления
@@ -577,7 +589,7 @@ const OzonMapping = {
 
             // Сбрасываем выбор
             this.clearSelections();
-            this.renderOzonProducts();
+            this.renderWbProducts();
 
         } catch (error) {
             App.showToast('Ошибка: ' + error.message, 'danger');
@@ -592,8 +604,8 @@ const OzonMapping = {
         if (!confirmed) return;
 
         try {
-            const data = await App.fetch('/api/ozon/delete-mapping', {
-                method: 'POST',
+            const data = await App.fetch('/api/wb/mapping', {
+                method: 'DELETE',
                 body: { mapping_id: mappingId }
             });
 
@@ -601,7 +613,7 @@ const OzonMapping = {
 
             // Перезагружаем данные
             await this.loadMappings();
-            await this.loadOzonProducts();
+            await this.loadWbProducts();
             await this.loadStatistics();
 
         } catch (error) {
@@ -614,9 +626,9 @@ const OzonMapping = {
      */
     clearSelections() {
         this.selectedOurProduct = null;
-        this.selectedOzonProduct = null;
+        this.selectedWbProduct = null;
 
-        document.querySelectorAll('.our-product-item, .ozon-product-item').forEach(item => {
+        document.querySelectorAll('.our-product-item, .wb-product-item').forEach(item => {
             item.classList.remove('active');
         });
 
@@ -628,7 +640,6 @@ const OzonMapping = {
      * Открытие модального окна добавления товара
      */
     openAddProductModal() {
-        // Очищаем форму
         document.getElementById('addProductForm')?.reset();
 
         const modal = new bootstrap.Modal(document.getElementById('addProductModal'));
@@ -653,7 +664,7 @@ const OzonMapping = {
         }
 
         try {
-            const data = await App.fetch('/api/ozon/save-product', {
+            const data = await App.fetch('/api/products', {
                 method: 'POST',
                 body: {
                     name: name,
@@ -697,9 +708,10 @@ const OzonMapping = {
         const quantity = parseInt(document.getElementById('editQtyValue').value) || 1;
 
         try {
-            await App.fetch('/api/ozon/update-quantity', {
+            await App.fetch('/api/wb/mapping', {
                 method: 'POST',
                 body: {
+                    action: 'update_pack',
                     mapping_id: mappingId,
                     quantity_in_pack: quantity
                 }
@@ -736,4 +748,4 @@ const OzonMapping = {
 };
 
 // Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => OzonMapping.init());
+document.addEventListener('DOMContentLoaded', () => WBMapping.init());

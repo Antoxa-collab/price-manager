@@ -1,0 +1,619 @@
+/* ============================================
+   MOBILE STYLES - Price Manager
+   Breakpoints:
+   - Desktop: > 1200px
+   - Tablet: 768px - 1200px
+   - Mobile: < 768px
+   ============================================ */
+
+/* ============================================
+   BASE MOBILE STYLES (< 768px)
+   ============================================ */
+@media (max-width: 767.98px) {
+
+    /* --- Body state when sidebar is open --- */
+    body.sidebar-open {
+        overflow: hidden;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar {
+        position: fixed;
+        left: -280px;
+        top: 0;
+        height: 100vh;
+        width: 280px;
+        z-index: 1050;
+        transition: left 0.3s ease;
+        overflow-y: auto;
+    }
+
+    .sidebar.show {
+        left: 0;
+    }
+
+    /* Overlay when sidebar is open */
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1040;
+    }
+
+    .sidebar-overlay.show {
+        display: block;
+    }
+
+    /* --- Main Content --- */
+    .main-content {
+        margin-left: 0 !important;
+        padding: 15px;
+        padding-top: 70px; /* Space for mobile header */
+    }
+
+    /* --- Mobile Header --- */
+    .mobile-header {
+        display: flex;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: #343a40;
+        z-index: 1030;
+        align-items: center;
+        padding: 0 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .mobile-header .hamburger-btn {
+        background: none;
+        border: none;
+        color: #fff;
+        font-size: 24px;
+        padding: 5px 10px;
+        cursor: pointer;
+        margin-right: 15px;
+    }
+
+    .mobile-header .hamburger-btn:hover {
+        color: #adb5bd;
+    }
+
+    .mobile-header .mobile-title {
+        color: #fff;
+        font-size: 18px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* --- Tables to Cards --- */
+    .table-responsive {
+        border: none;
+    }
+
+    .table.mobile-cards {
+        display: block;
+    }
+
+    .table.mobile-cards thead {
+        display: none;
+    }
+
+    .table.mobile-cards tbody {
+        display: block;
+    }
+
+    .table.mobile-cards tr {
+        display: block;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        padding: 15px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .table.mobile-cards td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border: none;
+        border-bottom: 1px solid #eee;
+    }
+
+    .table.mobile-cards td:last-child {
+        border-bottom: none;
+    }
+
+    .table.mobile-cards td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: #495057;
+        flex-shrink: 0;
+        margin-right: 15px;
+    }
+
+    /* Card actions at bottom */
+    .table.mobile-cards td.actions-cell {
+        justify-content: center;
+        padding-top: 15px;
+        margin-top: 10px;
+        border-top: 1px solid #dee2e6;
+        border-bottom: none;
+    }
+
+    .table.mobile-cards td.actions-cell::before {
+        display: none;
+    }
+
+    /* --- Buttons --- */
+    .btn {
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    .btn-group .btn {
+        padding: 8px 12px;
+    }
+
+    /* Stack button groups vertically on mobile */
+    .btn-group-mobile-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .btn-group-mobile-stack .btn {
+        width: 100%;
+    }
+
+    /* --- Forms --- */
+    .form-control {
+        font-size: 16px; /* Prevent zoom on iOS */
+        padding: 10px 12px;
+    }
+
+    .form-select {
+        font-size: 16px;
+        padding: 10px 12px;
+    }
+
+    .input-group {
+        flex-wrap: wrap;
+    }
+
+    .input-group .form-control {
+        flex: 1 1 100%;
+        margin-bottom: 8px;
+        border-radius: 6px !important;
+    }
+
+    .input-group .btn {
+        flex: 1 1 auto;
+        border-radius: 6px !important;
+    }
+
+    /* Form rows stack vertically */
+    .row.g-3 > [class*="col-"] {
+        margin-bottom: 10px;
+    }
+
+    /* --- Modals --- */
+    .modal-dialog {
+        margin: 10px;
+        max-width: calc(100% - 20px);
+    }
+
+    .modal-fullscreen-mobile {
+        width: 100vw;
+        max-width: none;
+        height: 100%;
+        margin: 0;
+    }
+
+    .modal-fullscreen-mobile .modal-content {
+        height: 100%;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .modal-header {
+        padding: 12px 15px;
+    }
+
+    .modal-body {
+        padding: 15px;
+    }
+
+    .modal-footer {
+        padding: 12px 15px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .modal-footer .btn {
+        flex: 1 1 auto;
+    }
+
+    /* --- Cards --- */
+    .card {
+        margin-bottom: 15px;
+    }
+
+    .card-header {
+        padding: 12px 15px;
+    }
+
+    .card-body {
+        padding: 15px;
+    }
+
+    /* --- Typography --- */
+    h1, .h1 { font-size: 1.75rem; }
+    h2, .h2 { font-size: 1.5rem; }
+    h3, .h3 { font-size: 1.25rem; }
+    h4, .h4 { font-size: 1.125rem; }
+
+    .page-header h1 {
+        font-size: 1.5rem;
+    }
+
+    /* --- Alerts --- */
+    .alert {
+        padding: 12px 15px;
+        font-size: 14px;
+    }
+
+    /* --- Pagination --- */
+    .pagination {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 5px;
+    }
+
+    .pagination .page-link {
+        padding: 8px 12px;
+    }
+
+    /* --- Stats/Info Boxes --- */
+    .stats-row {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .stat-box {
+        padding: 15px;
+    }
+
+    /* --- Hide on mobile --- */
+    .hide-mobile {
+        display: none !important;
+    }
+
+    /* --- Show only on mobile --- */
+    .show-mobile {
+        display: block !important;
+    }
+
+    .show-mobile-flex {
+        display: flex !important;
+    }
+
+    .show-mobile-inline {
+        display: inline !important;
+    }
+}
+
+/* ============================================
+   TABLET STYLES (768px - 1200px)
+   ============================================ */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+
+    .sidebar {
+        width: 220px;
+    }
+
+    .main-content {
+        margin-left: 220px;
+    }
+
+    /* Compact tables */
+    .table th,
+    .table td {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+
+    .btn {
+        padding: 8px 14px;
+        font-size: 13px;
+    }
+
+    /* Hide some columns on tablet */
+    .hide-tablet {
+        display: none !important;
+    }
+}
+
+/* ============================================
+   DESKTOP DEFAULTS (> 1200px)
+   ============================================ */
+@media (min-width: 1200px) {
+
+    .mobile-header {
+        display: none !important;
+    }
+
+    .sidebar-overlay {
+        display: none !important;
+    }
+
+    .show-mobile,
+    .show-mobile-flex,
+    .show-mobile-inline {
+        display: none !important;
+    }
+}
+
+/* ============================================
+   SPECIFIC PAGE ADAPTATIONS
+   ============================================ */
+
+/* --- Login Page --- */
+@media (max-width: 767.98px) {
+    .login-container {
+        padding: 20px 15px;
+    }
+
+    .login-card {
+        padding: 25px 20px;
+    }
+
+    .login-logo {
+        max-width: 150px;
+    }
+}
+
+/* --- Dashboard --- */
+@media (max-width: 767.98px) {
+    .dashboard-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-chart {
+        height: 250px;
+    }
+}
+
+/* --- Calculator Pages --- */
+@media (max-width: 767.98px) {
+    .calculator-form {
+        padding: 15px;
+    }
+
+    .calculator-results {
+        padding: 15px;
+    }
+
+    .price-input {
+        font-size: 18px;
+        padding: 12px;
+    }
+
+    /* Product selector */
+    .product-selector {
+        margin-bottom: 15px;
+    }
+
+    .product-selector select {
+        font-size: 16px;
+        padding: 12px;
+    }
+
+    /* Results table as cards */
+    .calculator-results .table tr {
+        flex-direction: column;
+    }
+}
+
+/* --- Settings Page --- */
+@media (max-width: 767.98px) {
+    .settings-section {
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+
+    .settings-section h5 {
+        font-size: 1.1rem;
+    }
+
+    .api-key-input {
+        font-size: 14px;
+    }
+}
+
+/* --- Mapping Pages --- */
+@media (max-width: 767.98px) {
+    .mapping-item {
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+
+    .mapping-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .mapping-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 10px;
+    }
+}
+
+/* --- Products List --- */
+@media (max-width: 767.98px) {
+    .products-filter {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .products-filter .form-control,
+    .products-filter .form-select {
+        width: 100%;
+    }
+
+    .product-card {
+        padding: 15px;
+    }
+
+    .product-image {
+        width: 80px;
+        height: 80px;
+    }
+
+    .product-info {
+        font-size: 14px;
+    }
+}
+
+/* --- AI Assistant Page --- */
+@media (max-width: 767.98px) {
+    .chat-container {
+        height: calc(100vh - 180px);
+    }
+
+    .chat-messages {
+        padding: 10px;
+    }
+
+    .chat-message {
+        max-width: 90%;
+        padding: 10px 12px;
+        font-size: 14px;
+    }
+
+    .chat-input-container {
+        padding: 10px;
+    }
+
+    .chat-input {
+        font-size: 16px;
+    }
+}
+
+/* ============================================
+   TOUCH FRIENDLY IMPROVEMENTS
+   ============================================ */
+@media (max-width: 767.98px) {
+    /* Larger touch targets */
+    a, button, .btn,
+    input[type="checkbox"],
+    input[type="radio"] {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    /* Checkbox/Radio sizing */
+    .form-check-input {
+        width: 20px;
+        height: 20px;
+        margin-top: 2px;
+    }
+
+    .form-check-label {
+        padding-left: 8px;
+        line-height: 24px;
+    }
+
+    /* Dropdown items */
+    .dropdown-item {
+        padding: 12px 16px;
+    }
+
+    /* List group items */
+    .list-group-item {
+        padding: 12px 16px;
+    }
+
+    /* Nav pills/tabs */
+    .nav-pills .nav-link,
+    .nav-tabs .nav-link {
+        padding: 10px 16px;
+    }
+}
+
+/* ============================================
+   SAFE AREA INSETS (notch support)
+   ============================================ */
+@supports (padding: max(0px)) {
+    @media (max-width: 767.98px) {
+        .mobile-header {
+            padding-left: max(15px, env(safe-area-inset-left));
+            padding-right: max(15px, env(safe-area-inset-right));
+        }
+
+        .main-content {
+            padding-left: max(15px, env(safe-area-inset-left));
+            padding-right: max(15px, env(safe-area-inset-right));
+            padding-bottom: max(15px, env(safe-area-inset-bottom));
+        }
+
+        .modal-footer {
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+        }
+    }
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+@media print {
+    .sidebar,
+    .mobile-header,
+    .sidebar-overlay,
+    .btn,
+    .no-print {
+        display: none !important;
+    }
+
+    .main-content {
+        margin-left: 0 !important;
+        padding: 0 !important;
+    }
+
+    .table.mobile-cards {
+        display: table;
+    }
+
+    .table.mobile-cards thead {
+        display: table-header-group;
+    }
+
+    .table.mobile-cards tbody {
+        display: table-row-group;
+    }
+
+    .table.mobile-cards tr {
+        display: table-row;
+    }
+
+    .table.mobile-cards td {
+        display: table-cell;
+    }
+}

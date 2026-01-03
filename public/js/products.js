@@ -20,6 +20,20 @@ const ProductsPage = {
             saveNewBtn.addEventListener('click', () => this.createProduct());
         }
 
+        // Редактирование товара (кнопка в строке)
+        document.querySelectorAll('.edit-product-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.editProduct(id);
+            });
+        });
+
+        // Сохранение изменений при редактировании
+        const updateBtn = document.getElementById('updateProductBtn');
+        if (updateBtn) {
+            updateBtn.addEventListener('click', () => this.updateProduct());
+        }
+
         // Сохранение отдельного товара (кнопка в строке)
         document.querySelectorAll('.save-product-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -39,7 +53,7 @@ const ProductsPage = {
             });
         });
 
-        // Enter в модальном окне
+        // Enter в модальном окне добавления
         const modal = document.getElementById('productModal');
         if (modal) {
             modal.addEventListener('keypress', (e) => {
@@ -51,6 +65,21 @@ const ProductsPage = {
             // Фокус на поле ввода при открытии модалки
             modal.addEventListener('shown.bs.modal', () => {
                 document.getElementById('newProductName').focus();
+            });
+        }
+
+        // Enter в модальном окне редактирования
+        const editModal = document.getElementById('editProductModal');
+        if (editModal) {
+            editModal.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.updateProduct();
+                }
+            });
+
+            // Фокус на поле ввода при открытии модалки
+            editModal.addEventListener('shown.bs.modal', () => {
+                document.getElementById('editProductName').focus();
             });
         }
 
@@ -112,6 +141,82 @@ const ProductsPage = {
             }
         } catch (error) {
             console.error('Create product error:', error);
+            App.showToast('Ошибка: ' + error.message, 'danger');
+        }
+    },
+
+    /**
+     * Открытие модального окна редактирования товара
+     * @param {number} id - ID товара
+     */
+    async editProduct(id) {
+        try {
+            const data = await App.fetch(`/api/products/get?id=${id}`);
+
+            if (data.success && data.product) {
+                const product = data.product;
+
+                document.getElementById('editProductId').value = product.id;
+                document.getElementById('editProductName').value = product.name || '';
+                document.getElementById('editProductSku').value = product.sku || '';
+                document.getElementById('editProductCategory').value = product.category || '';
+                document.getElementById('editProductCost').value = product.cost_price || 0;
+                document.getElementById('editProductMarkupMin').value = product.markup_min_price || 20;
+                document.getElementById('editProductMarkupYour').value = product.markup_your_price || 5;
+
+                const modal = new bootstrap.Modal(document.getElementById('editProductModal'));
+                modal.show();
+            } else {
+                App.showToast(data.message || 'Товар не найден', 'danger');
+            }
+        } catch (error) {
+            console.error('Edit product error:', error);
+            App.showToast('Ошибка: ' + error.message, 'danger');
+        }
+    },
+
+    /**
+     * Сохранение изменений товара
+     */
+    async updateProduct() {
+        const id = document.getElementById('editProductId').value;
+        const name = document.getElementById('editProductName').value.trim();
+        const sku = document.getElementById('editProductSku').value.trim();
+        const category = document.getElementById('editProductCategory').value.trim();
+        const costPrice = parseFloat(document.getElementById('editProductCost').value) || 0;
+        const markupMin = parseFloat(document.getElementById('editProductMarkupMin').value) || 20;
+        const markupYour = parseFloat(document.getElementById('editProductMarkupYour').value) || 5;
+
+        if (!name) {
+            App.showToast('Введите название товара', 'warning');
+            document.getElementById('editProductName').focus();
+            return;
+        }
+
+        try {
+            const data = await App.fetch('/api/products/update', {
+                method: 'POST',
+                body: {
+                    id: id,
+                    name: name,
+                    sku: sku,
+                    category: category,
+                    cost_price: costPrice,
+                    markup_min_price: markupMin,
+                    markup_your_price: markupYour
+                }
+            });
+
+            if (data.success) {
+                App.showToast('Товар успешно обновлён', 'success');
+                // Закрываем модалку и перезагружаем страницу
+                bootstrap.Modal.getInstance(document.getElementById('editProductModal')).hide();
+                window.location.reload();
+            } else {
+                App.showToast(data.message || 'Ошибка обновления товара', 'danger');
+            }
+        } catch (error) {
+            console.error('Update product error:', error);
             App.showToast('Ошибка: ' + error.message, 'danger');
         }
     },

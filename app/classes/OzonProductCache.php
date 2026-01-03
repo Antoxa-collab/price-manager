@@ -427,11 +427,12 @@ class OzonProductCache
      * Артикул содержит размер и количество: фанера_1/2_4мм_760x768_5шт
      *
      * @param int $productId ID нашего товара
+     * @param int $userId ID пользователя
      * @param int $baseWidth Ширина базового листа
      * @param int $baseHeight Высота базового листа
      * @return int Количество обновлённых маппингов
      */
-    public function autoFillPiecesPerSheet(int $productId, int $baseWidth = 1520, int $baseHeight = 1520): int
+    public function autoFillPiecesPerSheet(int $productId, int $userId, int $baseWidth = 1520, int $baseHeight = 1520): int
     {
         $updated = 0;
 
@@ -443,8 +444,8 @@ class OzonProductCache
              LEFT JOIN marketplace_products_cache mpc
                  ON mpc.product_id = pm.marketplace_product_id
                  AND mpc.marketplace = pm.marketplace
-             WHERE pm.product_id = ? AND pm.marketplace = 'ozon' AND pm.is_active = 1",
-            [$productId]
+             WHERE pm.product_id = ? AND pm.user_id = ? AND pm.marketplace = 'ozon' AND pm.is_active = 1",
+            [$productId, $userId]
         );
 
         foreach ($mappings as $mapping) {
@@ -478,5 +479,111 @@ class OzonProductCache
         }
 
         return $updated;
+    }
+
+    /**
+     * Создать сопоставление товара с Ozon
+     * @param int $userId ID пользователя
+     * @param int $productId ID нашего товара
+     * @param string $marketplaceProductId product_id с Ozon
+     * @param int $quantityInPack Количество в упаковке
+     * @param int $piecesPerSheet Кусочков с листа
+     * @param float $costPrice Себестоимость
+     * @return bool
+     */
+    public function createMapping(int $userId, int $productId, string $marketplaceProductId,
+                                  int $quantityInPack = 1, int $piecesPerSheet = 1, float $costPrice = 0): bool
+    {
+        // Получаем данные товара из кэша
+        $ozonProduct = $this->getByProductId($marketplaceProductId);
+        $offerId = $ozonProduct['offer_id'] ?? null;
+        $name = $ozonProduct['name'] ?? null;
+        $sku = $ozonProduct['sku'] ?? null;
+
+        return $this->db->execute("
+            INSERT INTO product_mappings
+            (user_id, product_id, marketplace, marketplace_product_id, marketplace_sku,
+             marketplace_offer_id, marketplace_name, quantity_in_pack, pieces_per_sheet, cost_price, is_active)
+            VALUES (?, ?, 'ozon', ?, ?, ?, ?, ?, ?, ?, 1)
+            ON DUPLICATE KEY UPDATE
+                marketplace_sku = VALUES(marketplace_sku),
+                marketplace_offer_id = VALUES(marketplace_offer_id),
+                marketplace_name = VALUES(marketplace_name),
+                quantity_in_pack = VALUES(quantity_in_pack),
+                pieces_per_sheet = VALUES(pieces_per_sheet),
+                cost_price = VALUES(cost_price),
+                is_active = 1,
+                updated_at = NOW()
+        ", [
+            $userId,
+            $productId,
+            $marketplaceProductId,
+            $sku,
+            $offerId,
+            $name,
+            $quantityInPack,
+            $piecesPerSheet,
+            $costPrice
+        ]);
+    }
+
+    /**
+     * Удалить сопоставление товара
+     */
+    public function deleteMapping(int $userId, int $productId, string $marketplaceProductId): bool
+    {
+        return $this->db->execute(
+            "DELETE FROM product_mappings
+             WHERE user_id = ? AND product_id = ? AND marketplace = 'ozon' AND marketplace_product_id = ?",
+            [$userId, $productId, $marketplaceProductId]
+        );
+    }
+
+    /**
+     * Получить все сопоставления пользователя (Ozon)
+     */
+    public function getAllMappings(int $userId): array
+    {
+        return $this->db->fetchAll("
+            SELECT
+                pm.*,
+                mpc.name as cache_name,
+                mpc.offer_id as cache_offer_id,
+                mpc.price as current_price,
+                mpc.min_price,
+                mpc.stock,
+                pr.name as product_name,
+                pr.sku as product_sku
+            FROM product_mappings pm
+            LEFT JOIN marketplace_products_cache mpc
+                ON mpc.product_id = pm.marketplace_product_id
+                AND mpc.marketplace = pm.marketplace
+            LEFT JOIN products pr ON pr.id = pm.product_id
+            WHERE pm.user_id = ? AND pm.marketplace = 'ozon' AND pm.is_active = 1
+            ORDER BY pr.name, mpc.name
+        ", [$userId]);
+    }
+
+    /**
+     * Получить сопоставления для конкретного товара
+     */
+    public function getMappedProducts(int $userId, int $productId): array
+    {
+        return $this->db->fetchAll("
+            SELECT
+                pm.*,
+                mpc.name as cache_name,
+                mpc.offer_id as cache_offer_id,
+                mpc.price as current_price,
+                mpc.min_price,
+                mpc.old_price,
+                mpc.stock
+            FROM product_mappings pm
+            LEFT JOIN marketplace_products_cache mpc
+                ON mpc.product_id = pm.marketplace_product_id
+                AND mpc.marketplace = pm.marketplace
+            WHERE pm.user_id = ? AND pm.product_id = ? AND pm.marketplace = 'ozon' AND pm.is_active = 1
+            ORDER BY mpc.name
+        ", [$userId, $productId]);
     }
 }

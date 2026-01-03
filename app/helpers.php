@@ -343,3 +343,58 @@ function isActive(string $path): string
 {
     return currentUrl() === $path ? 'active' : '';
 }
+
+/**
+ * Конвертация даты из ISO 8601 (с наносекундами) в MySQL формат
+ * WB возвращает: '2025-12-28T12:50:33.937207851Z'
+ * MySQL ожидает: '2025-12-28 12:50:33'
+ *
+ * @param string|null $isoDate Дата в формате ISO 8601
+ * @return string|null Дата в формате MySQL или null
+ */
+function convertIsoDateToMysql(?string $isoDate): ?string
+{
+    if (empty($isoDate)) {
+        return null;
+    }
+
+    try {
+        // Убираем наносекунды (оставляем только микросекунды или меньше) и Z
+        $cleaned = preg_replace('/\.\d{7,}Z$/', 'Z', $isoDate);
+        $cleaned = preg_replace('/\.\d+Z$/', 'Z', $cleaned);
+
+        $dt = new DateTime($cleaned);
+        return $dt->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        error_log("convertIsoDateToMysql error: {$e->getMessage()} for date: {$isoDate}");
+        return null;
+    }
+}
+
+/**
+ * Проверка CSRF для API эндпоинтов
+ * Возвращает true если токен валиден или если это безопасный запрос
+ * @return bool
+ */
+function checkCsrfForApi(): bool
+{
+    // GET запросы не требуют CSRF
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        return true;
+    }
+
+    // Получаем токен из разных источников
+    $token = $_POST['csrf_token']
+        ?? $_SERVER['HTTP_X_CSRF_TOKEN']
+        ?? post('csrf_token')
+        ?? '';
+
+    // Если токен пустой — пока пропускаем (для обратной совместимости)
+    // TODO: В будущем сделать строгую проверку
+    if (empty($token)) {
+        error_log("[CSRF] Warning: No CSRF token provided for " . ($_SERVER['REQUEST_URI'] ?? 'unknown'));
+        return true; // Временно разрешаем для совместимости
+    }
+
+    return verifyCsrfToken($token);
+}
