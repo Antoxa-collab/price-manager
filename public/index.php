@@ -704,20 +704,42 @@ try {
             $baseWidth = (int)post('base_width', 1520);
             $baseHeight = (int)post('base_height', 1520);
 
+            // Debug logging for MySQL 22003 investigation
+            error_log("[auto-fill-pieces] START: product_id={$productId}, baseWidth={$baseWidth}, baseHeight={$baseHeight}");
+
             if ($productId <= 0) {
                 jsonResponse(['success' => false, 'message' => 'Не указан product_id']);
             }
 
+            // Validate base dimensions (защита от переполнения)
+            $baseWidth = max(100, min(10000, $baseWidth));
+            $baseHeight = max(100, min(10000, $baseHeight));
+
             try {
                 $cache = new OzonProductCache();
                 $updated = $cache->autoFillPiecesPerSheet($productId, $baseWidth, $baseHeight);
+
+                error_log("[auto-fill-pieces] SUCCESS: updated={$updated}");
 
                 jsonResponse([
                     'success' => true,
                     'updated' => $updated,
                     'message' => "Обновлено {$updated} артикулов"
                 ]);
+            } catch (PDOException $e) {
+                // Детальное логирование для ошибок БД
+                $code = $e->getCode();
+                $msg = $e->getMessage();
+                error_log("[auto-fill-pieces] PDOException: code={$code}, msg={$msg}");
+                error_log("[auto-fill-pieces] Stack trace: " . $e->getTraceAsString());
+
+                jsonResponse([
+                    'success' => false,
+                    'message' => "Ошибка базы данных (код: {$code})",
+                    'debug' => DEBUG ? $msg : null
+                ], 500);
             } catch (Exception $e) {
+                error_log("[auto-fill-pieces] Exception: " . $e->getMessage());
                 jsonResponse([
                     'success' => false,
                     'message' => $e->getMessage()
@@ -1876,12 +1898,12 @@ try {
                     }
 
                     // Обновляем закупочную цену товара
-                    $db->execute(
+                    $affectedRows = $db->execute(
                         "UPDATE products SET cost_price = ?, updated_at = NOW() WHERE id = ? AND created_by = ?",
                         [$price, $productId, $userId]
                     );
 
-                    if ($db->getAffectedRows() > 0) {
+                    if ($affectedRows > 0) {
                         $updated++;
                     }
 

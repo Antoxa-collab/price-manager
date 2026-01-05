@@ -269,13 +269,17 @@ class WBProductCache
             $width = (int)$matches[1];
             $height = (int)$matches[2];
 
-            // Базовый лист 1520x1520
-            $baseSize = 1520;
+            // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
+            if ($width >= 50 && $height >= 50) {
+                // Базовый лист 1520x1520
+                $baseSize = 1520;
 
-            // Считаем сколько кусочков помещается
-            $piecesWidth = floor($baseSize / max($width, 1));
-            $piecesHeight = floor($baseSize / max($height, 1));
-            $piecesPerSheet = max(1, $piecesWidth * $piecesHeight);
+                // Считаем сколько кусочков помещается
+                $piecesWidth = floor($baseSize / $width);
+                $piecesHeight = floor($baseSize / $height);
+                // Максимум 10000 кусочков (защита от переполнения)
+                $piecesPerSheet = min(10000, max(1, $piecesWidth * $piecesHeight));
+            }
         }
 
         // Ищем количество в упаковке (например, 5шт, 10шт)

@@ -102,9 +102,13 @@ class Database
             // Детальное логирование ошибки БД
             ErrorLogger::dbError($sql, $e->getMessage(), $params);
 
-            // Формируем понятное сообщение об ошибке
-            $errorMessage = $this->formatDbError($e, $sql);
-            throw new Exception($errorMessage);
+            // Логируем параметры для отладки MySQL 22003
+            error_log("[Database::query] PDOException: code={$e->getCode()}, msg={$e->getMessage()}");
+            error_log("[Database::query] SQL: " . mb_substr($sql, 0, 500));
+            error_log("[Database::query] Params: " . json_encode($params, JSON_UNESCAPED_UNICODE));
+
+            // Перебрасываем оригинальный PDOException для catch в вызывающем коде
+            throw $e;
         }
     }
 
@@ -316,7 +320,8 @@ class Database
                     `marketplace_sku` VARCHAR(100) NULL,
                     `marketplace_offer_id` VARCHAR(100) NULL,
                     `marketplace_name` VARCHAR(500) NULL,
-                    `quantity_in_pack` INT NOT NULL DEFAULT 1,
+                    `quantity_in_pack` INT UNSIGNED NOT NULL DEFAULT 1,
+                    `pieces_per_sheet` INT UNSIGNED NOT NULL DEFAULT 1,
                     `is_active` TINYINT(1) NOT NULL DEFAULT 1,
                     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -613,7 +618,7 @@ class Database
 
         // Колонки для добавления
         $columnsToAdd = [
-            'pieces_per_sheet' => "ALTER TABLE product_mappings ADD COLUMN `pieces_per_sheet` INT NOT NULL DEFAULT 1 COMMENT 'Сколько единиц получается из 1 листа/закупочной единицы' AFTER `quantity_in_pack`"
+            'pieces_per_sheet' => "ALTER TABLE product_mappings ADD COLUMN `pieces_per_sheet` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Сколько единиц получается из 1 листа/закупочной единицы' AFTER `quantity_in_pack`"
         ];
 
         foreach ($columnsToAdd as $column => $sql) {

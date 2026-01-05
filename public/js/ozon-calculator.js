@@ -1671,11 +1671,16 @@ const CuttingReference = {
      * Рассчитать количество кусочков с учётом поворота
      */
     calculatePieces(sheetW, sheetH, pieceW, pieceH) {
+        // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
+        if (!pieceW || !pieceH || pieceW < 50 || pieceH < 50) {
+            return 1;
+        }
         // Вариант 1: стандартная ориентация
         const total1 = Math.floor(sheetW / pieceW) * Math.floor(sheetH / pieceH);
         // Вариант 2: повёрнутая ориентация
         const total2 = Math.floor(sheetW / pieceH) * Math.floor(sheetH / pieceW);
-        return Math.max(1, Math.max(total1, total2));
+        // Максимум 10000 (защита от переполнения в БД)
+        return Math.min(10000, Math.max(1, Math.max(total1, total2)));
     },
 
     /**
