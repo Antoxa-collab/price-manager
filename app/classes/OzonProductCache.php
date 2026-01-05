@@ -419,11 +419,12 @@ class OzonProductCache
      * @param int $sheetHeight Высота листа (мм)
      * @param int $pieceWidth Ширина кусочка (мм)
      * @param int $pieceHeight Высота кусочка (мм)
-     * @return int Количество кусочков
+     * @return int Количество кусочков (от 1 до 10000)
      */
     public static function calculatePiecesPerSheet(int $sheetWidth, int $sheetHeight, int $pieceWidth, int $pieceHeight): int
     {
-        if ($pieceWidth <= 0 || $pieceHeight <= 0) {
+        // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
+        if ($pieceWidth < 50 || $pieceHeight < 50) {
             return 1;
         }
 
@@ -437,8 +438,8 @@ class OzonProductCache
         $rows2 = floor($sheetHeight / $pieceWidth);
         $total2 = max(1, $cols2) * max(1, $rows2);
 
-        // Возвращаем лучший вариант
-        return max($total1, $total2);
+        // Возвращаем лучший вариант, но не больше 10000
+        return min(10000, max($total1, $total2));
     }
 
     /**
@@ -504,17 +505,20 @@ class OzonProductCache
         }
 
         // 3. Ищем количество: 5шт, 5 шт, 5штук, 5 штук, 10 листов
+        // Ограничение: min 1, max 10000 (защита от переполнения)
         // Сначала в артикуле
         if (preg_match('/[_\-\s]?(\d+)\s*(шт|штук|листов|лист)/ui', $article, $matches)) {
-            $result['quantity'] = max(1, (int)$matches[1]);
+            $result['quantity'] = max(1, min(10000, (int)$matches[1]));
         }
         // Потом в названии
         elseif (preg_match('/(\d+)\s*(шт|штук|листов|лист)/ui', $name, $matches)) {
-            $result['quantity'] = max(1, (int)$matches[1]);
+            $result['quantity'] = max(1, min(10000, (int)$matches[1]));
         }
 
         // 4. Вычисляем pieces_per_sheet если нашли размер
-        if ($result['width'] > 0 && $result['height'] > 0) {
+        // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
+        // Максимальное количество кусочков — 10000 (защита от переполнения)
+        if ($result['width'] >= 50 && $result['height'] >= 50) {
             // Вариант 1: стандартная ориентация
             $piecesWidth1 = floor($baseWidth / $result['width']);
             $piecesHeight1 = floor($baseHeight / $result['height']);
@@ -525,8 +529,8 @@ class OzonProductCache
             $piecesHeight2 = floor($baseHeight / $result['width']);
             $total2 = max(1, $piecesWidth2) * max(1, $piecesHeight2);
 
-            // Выбираем лучший вариант (больше кусочков)
-            $result['pieces_per_sheet'] = max($total1, $total2);
+            // Выбираем лучший вариант (больше кусочков), но не больше 10000
+            $result['pieces_per_sheet'] = min(10000, max($total1, $total2));
         }
 
         return $result;
@@ -596,26 +600,45 @@ class OzonProductCache
                     $parsed['height']
                 );
 
-                if ($referenceLookup !== null) {
+                // Валидация значения из справочника (защита от некорректных данных)
+                if ($referenceLookup !== null && $referenceLookup > 0 && $referenceLookup <= 10000) {
                     $piecesPerSheet = $referenceLookup;
                     $fromReference = true;
                 }
             }
 
+            // Финальная валидация перед записью в БД (защита от MySQL 22003)
+            $piecesPerSheet = max(1, min(10000, (int)$piecesPerSheet));
+            $quantity = max(1, min(10000, (int)$parsed['quantity']));
+
             // Логируем для отладки
             $formatInfo = $parsed['format'] ? " (format={$parsed['format']})" : '';
             $refInfo = $fromReference ? ' [from reference]' : ' [calculated]';
-            error_log("AutoFill: article='{$articleText}', name='{$nameText}' => pieces_per_sheet={$piecesPerSheet}, qty={$parsed['quantity']}{$formatInfo}{$refInfo}");
+            error_log("AutoFill: mapping_id={$mapping['id']}, article='{$articleText}', name='{$nameText}' => pieces_per_sheet={$piecesPerSheet}, qty={$quantity}{$formatInfo}{$refInfo}");
 
-            // Обновляем маппинг
-            $this->db->execute(
-                "UPDATE product_mappings
-                 SET pieces_per_sheet = ?, quantity_in_pack = ?, updated_at = NOW()
-                 WHERE id = ?",
-                [$piecesPerSheet, $parsed['quantity'], $mapping['id']]
-            );
+            // Дополнительная проверка типов перед UPDATE
+            if (!is_int($piecesPerSheet) || $piecesPerSheet < 1 || $piecesPerSheet > 10000) {
+                error_log("AutoFill ERROR: invalid piecesPerSheet={$piecesPerSheet} (type=" . gettype($piecesPerSheet) . ")");
+                $piecesPerSheet = 1;
+            }
+            if (!is_int($quantity) || $quantity < 1 || $quantity > 10000) {
+                error_log("AutoFill ERROR: invalid quantity={$quantity} (type=" . gettype($quantity) . ")");
+                $quantity = 1;
+            }
 
-            $updated++;
+            // Обновляем маппинг с try-catch для детальной диагностики
+            try {
+                $this->db->execute(
+                    "UPDATE product_mappings
+                     SET pieces_per_sheet = ?, quantity_in_pack = ?, updated_at = NOW()
+                     WHERE id = ?",
+                    [$piecesPerSheet, $quantity, $mapping['id']]
+                );
+                $updated++;
+            } catch (PDOException $e) {
+                error_log("AutoFill DB ERROR: mapping_id={$mapping['id']}, pps={$piecesPerSheet}, qty={$quantity}, code={$e->getCode()}, msg={$e->getMessage()}");
+                throw $e;
+            }
         }
 
         return $updated;
@@ -635,12 +658,14 @@ class OzonProductCache
     {
         // Ищем лист в справочнике с точным или близким размером
         // Допускаем погрешность в 50мм для размера листа
+        // ВАЖНО: Используем CAST AS SIGNED для избежания ошибки MySQL 22003
+        // при вычитании UNSIGNED значений (когда результат отрицательный)
         $sheet = $this->db->fetchOne(
             "SELECT id FROM cutting_sheets
              WHERE user_id = ? AND is_active = 1
-               AND ABS(sheet_width - ?) <= 50
-               AND ABS(sheet_height - ?) <= 50
-             ORDER BY ABS(sheet_width - ?) + ABS(sheet_height - ?) ASC
+               AND ABS(CAST(sheet_width AS SIGNED) - CAST(? AS SIGNED)) <= 50
+               AND ABS(CAST(sheet_height AS SIGNED) - CAST(? AS SIGNED)) <= 50
+             ORDER BY ABS(CAST(sheet_width AS SIGNED) - CAST(? AS SIGNED)) + ABS(CAST(sheet_height AS SIGNED) - CAST(? AS SIGNED)) ASC
              LIMIT 1",
             [$userId, $sheetWidth, $sheetHeight, $sheetWidth, $sheetHeight]
         );
