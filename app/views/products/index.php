@@ -25,6 +25,9 @@ $products = $db->fetchAll("
                 Товары
             </h4>
             <div>
+                <button class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#uploadPdfModal">
+                    <i class="bi bi-file-earmark-pdf me-1"></i> Загрузить цены из PDF
+                </button>
                 <a href="/ozon" class="btn btn-outline-info me-2">
                     <i class="bi bi-calculator me-1"></i> Калькулятор Ozon
                 </a>
@@ -274,4 +277,101 @@ $products = $db->fetchAll("
     </div>
 </div>
 
+<!-- Модальное окно загрузки PDF -->
+<div class="modal fade" id="uploadPdfModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-file-earmark-pdf me-2 text-danger"></i>
+                    Загрузка цен из PDF
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Шаг 1: Загрузка файла -->
+                <div id="pdfUploadStep">
+                    <div class="text-center py-5">
+                        <i class="bi bi-cloud-upload display-1 text-muted mb-3"></i>
+                        <h5>Выберите PDF файл с накладной</h5>
+                        <p class="text-muted">Поддерживаются PDF файлы накладных от поставщиков</p>
+                        <input type="file" id="pdfFileInput" accept=".pdf" class="d-none">
+                        <button type="button" class="btn btn-outline-danger btn-lg" id="selectPdfBtn">
+                            <i class="bi bi-file-earmark-pdf me-2"></i>
+                            Выбрать PDF файл
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Шаг 2: Парсинг -->
+                <div id="pdfParsingStep" class="d-none">
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary mb-3" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        <h5>Анализируем PDF...</h5>
+                        <p class="text-muted">Извлекаем данные о товарах и ценах</p>
+                    </div>
+                </div>
+
+                <!-- Шаг 3: Таблица сопоставления -->
+                <div id="pdfMappingStep" class="d-none">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Сопоставьте товары из накладной с товарами в базе. Сохранённые сопоставления будут использоваться автоматически при следующих загрузках.
+                    </div>
+
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-dark table-striped table-sm mb-0">
+                            <thead class="sticky-top bg-dark">
+                                <tr>
+                                    <th style="width: 50px;">
+                                        <input type="checkbox" class="form-check-input" id="selectAllPdfItems" checked>
+                                    </th>
+                                    <th>Код поставщика</th>
+                                    <th>Наименование в накладной</th>
+                                    <th class="text-end">Цена</th>
+                                    <th style="width: 300px;">Товар в базе</th>
+                                    <th class="text-center" style="width: 100px;">Статус</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pdfMappingTable">
+                                <!-- Заполняется динамически -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mt-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="text-muted">Найдено позиций: <strong id="pdfTotalItems">0</strong></span>
+                            <span class="text-muted ms-3">Сопоставлено: <strong id="pdfMatchedItems" class="text-success">0</strong></span>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-secondary me-2" id="pdfBackBtn">
+                                <i class="bi bi-arrow-left me-1"></i> Назад
+                            </button>
+                            <button type="button" class="btn btn-success" id="applyPdfPricesBtn">
+                                <i class="bi bi-check-lg me-1"></i> Применить цены
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаг 4: Результат -->
+                <div id="pdfResultStep" class="d-none">
+                    <div class="text-center py-5">
+                        <i class="bi bi-check-circle display-1 text-success mb-3"></i>
+                        <h5>Цены успешно обновлены!</h5>
+                        <p class="text-muted" id="pdfResultMessage">Обновлено товаров: 0</p>
+                        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
+                            <i class="bi bi-check me-1"></i> Готово
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/pdf-price-loader.js"></script>
 <?php include VIEWS_PATH . '/layout/footer.php'; ?>
