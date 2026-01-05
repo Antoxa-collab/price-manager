@@ -279,7 +279,7 @@ $products = $db->fetchAll("
 
 <!-- Модальное окно загрузки PDF -->
 <div class="modal fade" id="uploadPdfModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
+    <div class="modal-dialog modal-xl" style="max-width: 95%;">
         <div class="modal-content bg-dark">
             <div class="modal-header border-secondary">
                 <h5 class="modal-title">

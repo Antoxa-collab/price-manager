@@ -1215,3 +1215,232 @@ th.sortable.sorted .sort-icon {
         padding-top: 0;
     }
 }
+
+/* ==================== Редактируемые цены в калькуляторе ==================== */
+
+/* Стиль для input минимальной цены */
+.min-price-input {
+    background-color: transparent !important;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.min-price-input:hover {
+    border-color: #ffc107;
+    background-color: rgba(255, 193, 7, 0.1) !important;
+}
+
+.min-price-input:focus {
+    border-color: #ffc107;
+    background-color: rgba(255, 193, 7, 0.15) !important;
+    box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25);
+}
+
+/* Подсветка изменённой минимальной цены */
+.min-price-input.price-modified {
+    background-color: rgba(255, 193, 7, 0.25) !important;
+    border-color: #ffc107 !important;
+}
+
+/* Подсветка изменённой строки */
+tr.row-modified {
+    background-color: rgba(255, 193, 7, 0.1) !important;
+}
+
+/* Скрыть стрелки у number input */
+.min-price-input::-webkit-outer-spin-button,
+.min-price-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.min-price-input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* ============================================
+   ТАБЛИЦА ЗАГРУЗКИ ЦЕН ИЗ PDF
+   Спокойная цветовая гамма
+   ============================================ */
+
+/* Модальное окно PDF */
+#uploadPdfModal .modal-content {
+    background-color: #1e2127;
+    border: 1px solid #3a3f47;
+}
+
+#uploadPdfModal .modal-header {
+    background-color: #252830;
+    border-bottom: 1px solid #3a3f47;
+}
+
+#uploadPdfModal .modal-footer {
+    background-color: #252830;
+    border-top: 1px solid #3a3f47;
+}
+
+/* Таблица сопоставления PDF */
+#pdfMappingTable {
+    font-size: 0.9rem;
+}
+
+#pdfMappingTable thead th {
+    background-color: #2d3139 !important;
+    color: #e0e0e0;
+    font-weight: 600;
+    border-bottom: 2px solid #4a4f57;
+    padding: 12px 8px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+#pdfMappingTable tbody tr {
+    background-color: #1e2127;
+    border-bottom: 1px solid #2d3139;
+    transition: background-color 0.15s ease;
+}
+
+#pdfMappingTable tbody tr:nth-child(even) {
+    background-color: #232830;
+}
+
+#pdfMappingTable tbody tr:hover {
+    background-color: #2a3140 !important;
+}
+
+/* Ячейки таблицы PDF */
+#pdfMappingTable td {
+    padding: 10px 8px;
+    vertical-align: middle;
+    color: #d0d0d0;
+    border: none;
+    border-bottom: 1px solid #2d3139;
+}
+
+/* Код поставщика */
+#pdfMappingTable td code {
+    background-color: #2d3139;
+    color: #7eb8da;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+/* Цена — приглушённый жёлтый */
+#pdfMappingTable .text-warning {
+    color: #d4b96a !important;
+}
+
+/* Выпадающий список "Товар в базе" */
+#pdfMappingTable .product-select {
+    background-color: #2d3139;
+    border: 1px solid #4a4f57;
+    color: #e0e0e0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    min-width: 250px;
+    font-size: 0.9rem;
+}
+
+#pdfMappingTable .product-select:focus {
+    border-color: #5a9fd4;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.2);
+}
+
+#pdfMappingTable .product-select option {
+    background-color: #2d3139;
+    color: #e0e0e0;
+    padding: 8px;
+}
+
+/* ============================================
+   СТАТУСЫ СТРОК PDF — ПРИГЛУШЁННЫЕ ЦВЕТА
+   ============================================ */
+
+/* Сопоставлено автоматически — лёгкий зелёный оттенок */
+#pdfMappingTable tr.table-success {
+    background-color: rgba(75, 181, 67, 0.08) !important;
+}
+
+#pdfMappingTable tr.table-success:hover {
+    background-color: rgba(75, 181, 67, 0.15) !important;
+}
+
+/* Нейтральный статус */
+#pdfMappingTable tr.table-secondary {
+    background-color: #1e2127 !important;
+}
+
+/* ============================================
+   БЕЙДЖИ СТАТУСОВ PDF
+   ============================================ */
+
+#pdfMappingTable .badge.bg-success {
+    background-color: rgba(75, 181, 67, 0.25) !important;
+    color: #6fcf6f;
+    font-weight: 500;
+    padding: 4px 8px;
+}
+
+#pdfMappingTable .badge.bg-secondary {
+    background-color: rgba(108, 117, 125, 0.25) !important;
+    color: #9ca3af;
+    font-weight: 500;
+    padding: 4px 8px;
+}
+
+/* ============================================
+   ИНФОРМАЦИОННАЯ ПАНЕЛЬ PDF
+   ============================================ */
+
+#pdfMappingStep .alert-info {
+    background-color: rgba(90, 159, 212, 0.1);
+    border: 1px solid rgba(90, 159, 212, 0.3);
+    color: #a8c8e8;
+}
+
+/* ============================================
+   КНОПКА "ПРИМЕНИТЬ ЦЕНЫ"
+   ============================================ */
+
+#applyPdfPricesBtn {
+    background-color: #4bb543;
+    border-color: #4bb543;
+    color: #fff;
+}
+
+#applyPdfPricesBtn:hover {
+    background-color: #3da33b;
+    border-color: #3da33b;
+}
+
+#applyPdfPricesBtn:disabled {
+    background-color: #3a7a35;
+    border-color: #3a7a35;
+}
+
+/* ============================================
+   ЧЕКБОКСЫ PDF
+   ============================================ */
+
+#pdfMappingTable input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #5a9fd4;
+}
+
+/* ============================================
+   СТАТИСТИКА PDF
+   ============================================ */
+
+#pdfMappingStep .badge.bg-info {
+    background-color: rgba(90, 159, 212, 0.25) !important;
+    color: #7eb8da;
+}
+
+#pdfMappingStep .badge.bg-warning {
+    background-color: rgba(212, 185, 106, 0.25) !important;
+    color: #d4b96a;
+}

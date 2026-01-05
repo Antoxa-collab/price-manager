@@ -1668,28 +1668,48 @@ try {
             unlink($outputFile); // Удаляем временный файл
 
             // Парсим текст накладной
-            // Ищем строки с товарами: код, наименование, количество, цена
+            // Формат строки: № | Код | Товары | Кол-во | Ед. | Цена | Сумма
+            // Пример: 1  ЦБ000005326  04х1525х1525 ФК Е1 1/2 шл М Фанера  50 лист  610,00  30 500,00
             $items = [];
             $lines = explode("\n", $text);
 
-            // Паттерн для строки товара: код (цифры/буквы), название, количество, цена
-            // Примеры форматов:
-            // 12345   Фанера ФК 1525x1525 4мм   10   1234.56
-            // АРТ-001   Название товара   5 шт   999.00 руб
-            $pattern = '/^\s*([A-Za-zА-Яа-я0-9\-\.\/]+)\s+(.+?)\s+(\d+(?:[,\.]\d+)?)\s*(?:шт\.?|л\.?|кг\.?|м\.?)?\s+(\d+(?:[,\.]\d+)?)\s*(?:руб\.?|₽|р\.?)?\s*$/u';
+            // Стоп-слова для фильтрации служебных строк
+            $stopWords = ['итого', 'всего', 'ндс', 'в т.ч.', 'в том числе', 'сумма', 'к оплате',
+                          'налог', 'скидка', 'доставка', 'услуг', 'отгруз', 'поставщик', 'покупатель',
+                          'адрес', 'инн', 'кпп', 'бик', 'р/с', 'к/с', 'банк', 'телефон', 'email',
+                          'накладная', 'счёт', 'счет', 'договор', 'от'];
+
+            // Основной паттерн: № Код Название Кол-во Ед. Цена Сумма
+            // Код: ЦБ + цифры или просто цифры (8-15 символов)
+            // Цена может содержать пробел как разделитель тысяч: "1 580,00"
+            $pattern = '/^\s*(\d+)\s+(ЦБ?\d{6,15}|\d{8,15})\s+(.+?)\s+(\d+(?:[,\.]\d+)?)\s*(?:шт\.?|лист\.?|л\.?|кг\.?|м\.?|уп\.?|рул\.?)?\s+([\d\s]+[,\.]\d{2})\s+([\d\s]+[,\.]\d{2})\s*$/ui';
 
             foreach ($lines as $line) {
                 $line = trim($line);
-                if (empty($line)) continue;
+                if (empty($line) || mb_strlen($line) < 20) continue;
+
+                // Проверяем стоп-слова
+                $lineLower = mb_strtolower($line);
+                $isStopLine = false;
+                foreach ($stopWords as $stopWord) {
+                    if (mb_strpos($lineLower, $stopWord) !== false) {
+                        $isStopLine = true;
+                        break;
+                    }
+                }
+                if ($isStopLine) continue;
 
                 if (preg_match($pattern, $line, $matches)) {
-                    $code = trim($matches[1]);
-                    $name = trim($matches[2]);
-                    $qty = (float)str_replace(',', '.', $matches[3]);
-                    $price = (float)str_replace(',', '.', $matches[4]);
+                    $code = trim($matches[2]);
+                    $name = trim($matches[3]);
+                    $qty = (float)str_replace(',', '.', $matches[4]);
+
+                    // Убираем пробелы из цены и заменяем запятую на точку
+                    $priceStr = str_replace([' ', ','], ['', '.'], $matches[5]);
+                    $price = (float)$priceStr;
 
                     // Пропускаем если цена слишком маленькая или код слишком короткий
-                    if ($price < 1 || strlen($code) < 2) continue;
+                    if ($price < 1 || strlen($code) < 6) continue;
 
                     $items[] = [
                         'supplier_code' => $code,
@@ -1700,24 +1720,40 @@ try {
                 }
             }
 
-            // Если не нашли товары стандартным паттерном, пробуем альтернативный
+            // Если не нашли товары основным паттерном, пробуем альтернативный (без номера строки)
             if (empty($items)) {
-                // Альтернативный паттерн: ищем строки с ценами в конце
-                $altPattern = '/^(.{3,20}?)\s+(.{10,}?)\s+(\d+(?:[,\.]\d{2})?)\s*$/u';
+                // Альтернативный паттерн: Код Название Кол-во Ед. Цена Сумма (без № в начале)
+                $altPattern = '/^\s*(ЦБ?\d{6,15}|\d{8,15})\s+(.+?)\s+(\d+(?:[,\.]\d+)?)\s*(?:шт\.?|лист\.?|л\.?|кг\.?|м\.?|уп\.?|рул\.?)?\s+([\d\s]+[,\.]\d{2})\s+([\d\s]+[,\.]\d{2})\s*$/ui';
+
                 foreach ($lines as $line) {
                     $line = trim($line);
-                    if (empty($line) || strlen($line) < 20) continue;
+                    if (empty($line) || mb_strlen($line) < 20) continue;
+
+                    // Проверяем стоп-слова
+                    $lineLower = mb_strtolower($line);
+                    $isStopLine = false;
+                    foreach ($stopWords as $stopWord) {
+                        if (mb_strpos($lineLower, $stopWord) !== false) {
+                            $isStopLine = true;
+                            break;
+                        }
+                    }
+                    if ($isStopLine) continue;
 
                     if (preg_match($altPattern, $line, $matches)) {
                         $code = trim($matches[1]);
                         $name = trim($matches[2]);
-                        $price = (float)str_replace(',', '.', $matches[3]);
+                        $qty = (float)str_replace(',', '.', $matches[3]);
 
-                        if ($price >= 10 && strlen($code) >= 2) {
+                        // Убираем пробелы из цены
+                        $priceStr = str_replace([' ', ','], ['', '.'], $matches[4]);
+                        $price = (float)$priceStr;
+
+                        if ($price >= 1 && strlen($code) >= 6) {
                             $items[] = [
                                 'supplier_code' => $code,
                                 'supplier_name' => $name,
-                                'quantity' => 1,
+                                'quantity' => $qty,
                                 'price' => $price
                             ];
                         }
@@ -1729,7 +1765,7 @@ try {
                 jsonResponse([
                     'success' => false,
                     'message' => 'Не удалось найти товары в PDF. Проверьте формат накладной.',
-                    'raw_text' => mb_substr($text, 0, 2000) // Первые 2000 символов для отладки
+                    'raw_text' => mb_substr($text, 0, 3000) // Первые 3000 символов для отладки
                 ]);
             }
 
@@ -1797,69 +1833,83 @@ try {
                 jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
             }
 
-            $items = post('items', []);
+            try {
+                $items = post('items', []);
 
-            if (empty($items)) {
-                jsonResponse(['success' => false, 'message' => 'Нет товаров для обновления']);
-            }
+                // Логируем входящие данные для отладки
+                error_log("[apply-pdf-prices] User: $userId, Items count: " . count($items));
 
-            $db = Database::getInstance();
-            $updated = 0;
-            $mappingsSaved = 0;
-
-            // Проверяем/создаём таблицу supplier_product_mappings
-            $db->execute("
-                CREATE TABLE IF NOT EXISTS `supplier_product_mappings` (
-                    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                    `user_id` INT UNSIGNED NOT NULL DEFAULT 1,
-                    `supplier_code` VARCHAR(50) NOT NULL,
-                    `supplier_name` VARCHAR(255) DEFAULT NULL,
-                    `product_id` INT UNSIGNED NOT NULL,
-                    `supplier_id` INT UNSIGNED DEFAULT NULL,
-                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY `uk_user_supplier_code` (`user_id`, `supplier_code`),
-                    KEY `idx_product` (`product_id`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            ");
-
-            foreach ($items as $item) {
-                $productId = (int)($item['product_id'] ?? 0);
-                $price = (float)($item['price'] ?? 0);
-                $supplierCode = trim($item['supplier_code'] ?? '');
-                $supplierName = trim($item['supplier_name'] ?? '');
-                $saveMapping = (bool)($item['save_mapping'] ?? true);
-
-                if ($productId <= 0 || $price <= 0) continue;
-
-                // Обновляем закупочную цену товара
-                $db->execute(
-                    "UPDATE products SET cost_price = ?, updated_at = NOW() WHERE id = ? AND created_by = ?",
-                    [$price, $productId, $userId]
-                );
-
-                if ($db->getAffectedRows() > 0) {
-                    $updated++;
+                if (empty($items)) {
+                    jsonResponse(['success' => false, 'message' => 'Нет товаров для обновления']);
                 }
 
-                // Сохраняем сопоставление (если нужно)
-                if ($saveMapping && !empty($supplierCode)) {
+                $db = Database::getInstance();
+                $updated = 0;
+                $mappingsSaved = 0;
+
+                // Проверяем/создаём таблицу supplier_product_mappings (без FK для упрощения)
+                $db->execute("
+                    CREATE TABLE IF NOT EXISTS `supplier_product_mappings` (
+                        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                        `user_id` INT UNSIGNED NOT NULL DEFAULT 1,
+                        `supplier_code` VARCHAR(50) NOT NULL,
+                        `supplier_name` VARCHAR(255) DEFAULT NULL,
+                        `product_id` INT UNSIGNED NOT NULL,
+                        `supplier_id` INT UNSIGNED DEFAULT NULL,
+                        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY `uk_user_supplier_code` (`user_id`, `supplier_code`),
+                        KEY `idx_product` (`product_id`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ");
+
+                foreach ($items as $item) {
+                    $productId = (int)($item['product_id'] ?? 0);
+                    $price = (float)($item['price'] ?? 0);
+                    $supplierCode = trim($item['supplier_code'] ?? '');
+                    $supplierName = trim($item['supplier_name'] ?? '');
+                    $saveMapping = (bool)($item['save_mapping'] ?? true);
+
+                    if ($productId <= 0 || $price <= 0) {
+                        error_log("[apply-pdf-prices] Skipping: productId=$productId, price=$price");
+                        continue;
+                    }
+
+                    // Обновляем закупочную цену товара
                     $db->execute(
-                        "INSERT INTO supplier_product_mappings (user_id, supplier_code, supplier_name, product_id)
-                         VALUES (?, ?, ?, ?)
-                         ON DUPLICATE KEY UPDATE supplier_name = VALUES(supplier_name), product_id = VALUES(product_id), updated_at = NOW()",
-                        [$userId, $supplierCode, $supplierName, $productId]
+                        "UPDATE products SET cost_price = ?, updated_at = NOW() WHERE id = ? AND created_by = ?",
+                        [$price, $productId, $userId]
                     );
-                    $mappingsSaved++;
-                }
-            }
 
-            jsonResponse([
-                'success' => true,
-                'message' => "Обновлено товаров: $updated, сохранено сопоставлений: $mappingsSaved",
-                'updated' => $updated,
-                'mappings_saved' => $mappingsSaved
-            ]);
+                    if ($db->getAffectedRows() > 0) {
+                        $updated++;
+                    }
+
+                    // Сохраняем сопоставление (если нужно)
+                    if ($saveMapping && !empty($supplierCode)) {
+                        $db->execute(
+                            "INSERT INTO supplier_product_mappings (user_id, supplier_code, supplier_name, product_id)
+                             VALUES (?, ?, ?, ?)
+                             ON DUPLICATE KEY UPDATE supplier_name = VALUES(supplier_name), product_id = VALUES(product_id), updated_at = NOW()",
+                            [$userId, $supplierCode, $supplierName, $productId]
+                        );
+                        $mappingsSaved++;
+                    }
+                }
+
+                error_log("[apply-pdf-prices] Success: updated=$updated, mappings=$mappingsSaved");
+
+                jsonResponse([
+                    'success' => true,
+                    'message' => "Обновлено товаров: $updated, сохранено сопоставлений: $mappingsSaved",
+                    'updated' => $updated,
+                    'mappings_saved' => $mappingsSaved
+                ]);
+
+            } catch (Exception $e) {
+                error_log("[apply-pdf-prices] Error: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка сервера: ' . $e->getMessage()], 500);
+            }
             break;
 
         // Загрузка цен на Ozon (устаревший endpoint, оставлен для совместимости)

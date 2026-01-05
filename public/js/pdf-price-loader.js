@@ -88,8 +88,8 @@ const PdfPriceLoader = {
                     <input type="checkbox" class="form-check-input pdf-item-check"
                            data-index="${index}" ${isAutoMapped ? 'checked' : ''}>
                 </td>
-                <td><code class="text-info">${this.escapeHtml(item.supplier_code)}</code></td>
-                <td class="text-truncate" style="max-width: 250px;" title="${this.escapeHtml(item.supplier_name)}">
+                <td><code>${this.escapeHtml(item.supplier_code)}</code></td>
+                <td title="${this.escapeHtml(item.supplier_name)}">
                     ${this.escapeHtml(item.supplier_name)}
                 </td>
                 <td class="text-end text-warning fw-bold">${this.formatPrice(item.price)}</td>

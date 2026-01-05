@@ -284,6 +284,59 @@ const OzonCalculator = {
     },
 
     /**
+     * Обработчик изменения минимальной цены
+     * Пересчитывает "Ваша цена" и "До скидки" для конкретной строки
+     */
+    onMinPriceChange(input) {
+        const row = input.closest('tr');
+        const mappingId = input.dataset.id;
+        const newMinPrice = parseFloat(input.value) || 0;
+        const originalPrice = parseFloat(input.dataset.original) || 0;
+
+        // Получаем текущие настройки наценок
+        const markupYour = parseFloat(document.getElementById('markupYour')?.value) || 0;
+        const markupOldPrice = parseFloat(document.getElementById('markupOldPrice')?.value) || 15;
+
+        // Рассчитываем новые цены по формулам:
+        // your_price = min_price × (1 + markupYour/100)
+        // old_price = your_price × (1 + markupOldPrice/100)
+        const yourPrice = this.roundPrice(newMinPrice * (1 + markupYour / 100));
+        const oldPrice = this.roundPrice(yourPrice * (1 + markupOldPrice / 100));
+
+        // Обновляем ячейки в строке
+        const yourPriceCell = row.querySelector('.your-price-cell');
+        const oldPriceCell = row.querySelector('.old-price-cell');
+
+        if (yourPriceCell) {
+            yourPriceCell.textContent = App.formatPrice(yourPrice);
+            yourPriceCell.dataset.value = yourPrice;
+        }
+
+        if (oldPriceCell) {
+            oldPriceCell.textContent = App.formatPrice(oldPrice);
+            oldPriceCell.dataset.value = oldPrice;
+        }
+
+        // Обновляем данные в массиве articles
+        const article = this.articles.find(a => String(a.mapping_id) === String(mappingId));
+        if (article) {
+            article.calculated_min_price = newMinPrice;
+            article.calculated_your_price = yourPrice;
+            article.calculated_old_price = oldPrice;
+            article.custom_min_price = newMinPrice; // Помечаем как изменённую вручную
+        }
+
+        // Подсвечиваем изменённую ячейку
+        if (Math.abs(newMinPrice - originalPrice) > 0.01) {
+            input.classList.add('price-modified');
+            row.classList.add('row-modified');
+        } else {
+            input.classList.remove('price-modified');
+            row.classList.remove('row-modified');
+        }
+    },
+
+    /**
      * Рендеринг таблицы артикулов
      */
     renderArticlesTable() {
