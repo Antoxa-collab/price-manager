@@ -17,8 +17,39 @@ const OzonCalculator = {
         console.log('OzonCalculator.init() started');
         this.bindEvents();
         this.loadProducts();
+        this.loadSheetSelect();
         this.initTooltips();
         console.log('OzonCalculator.init() completed');
+    },
+
+    /**
+     * Загрузка списка листов из справочника раскроя в выпадающий список
+     */
+    async loadSheetSelect() {
+        const select = document.getElementById('sheetSelect');
+        if (!select) return;
+
+        try {
+            const data = await App.fetch('/api/cutting/sheets');
+            if (data.success && data.sheets && data.sheets.length > 0) {
+                select.innerHTML = data.sheets.map(sheet =>
+                    `<option value="${sheet.sheet_width}x${sheet.sheet_height}"
+                             data-id="${sheet.id}"
+                             data-width="${sheet.sheet_width}"
+                             data-height="${sheet.sheet_height}">
+                        ${App.escapeHtml(sheet.material_name)} ${sheet.sheet_width}×${sheet.sheet_height}
+                    </option>`
+                ).join('');
+            } else {
+                // Если справочник пуст — оставляем дефолтный вариант
+                select.innerHTML = `
+                    <option value="1520x1520" data-width="1520" data-height="1520">Фанера ФК 1520×1520</option>
+                    <option value="2440x1220" data-width="2440" data-height="1220">Фанера ФСФ 2440×1220</option>
+                `;
+            }
+        } catch (e) {
+            console.warn('Не удалось загрузить справочник листов:', e);
+        }
     },
 
     /**
@@ -41,6 +72,7 @@ const OzonCalculator = {
         // Изменение наценок - живой пересчёт
         document.getElementById('markupMin')?.addEventListener('input', () => this.recalculatePrices());
         document.getElementById('markupYour')?.addEventListener('input', () => this.recalculatePrices());
+        document.getElementById('markupOldPrice')?.addEventListener('input', () => this.recalculatePrices());
 
         // Кнопка пересчёта
         document.getElementById('recalculateBtn')?.addEventListener('click', () => this.recalculatePrices());
@@ -186,27 +218,28 @@ const OzonCalculator = {
      * Формула: cost = (cost_price / pieces_per_sheet) × quantity_in_pack
      * min_price = cost × (1 + markup_min / 100)
      * your_price = min_price × (1 + markup_your / 100)
+     * old_price = your_price × (1 + markup_old / 100)
      */
     recalculatePrices() {
         if (!this.selectedProduct) return;
 
         const markupMin = parseFloat(document.getElementById('markupMin').value) || 0;
         const markupYour = parseFloat(document.getElementById('markupYour').value) || 0;
+        const markupOldPrice = parseFloat(document.getElementById('markupOldPrice').value) || 15;
         const costPrice = this.selectedProduct.cost_price || 0;
-        const basePrice = this.selectedProduct.base_price || costPrice;
 
         // Расчёт для базовой единицы (1 шт из листа)
-        // Это цена за 1 единицу если pieces_per_sheet=1
-        const unitCost = costPrice; // Закупочная цена за 1 лист/единицу
+        const unitCost = costPrice;
         const unitMinPrice = this.roundPrice(unitCost * (1 + markupMin / 100));
         const unitYourPrice = this.roundPrice(unitMinPrice * (1 + markupYour / 100));
+        const unitOldPrice = this.roundPrice(unitYourPrice * (1 + markupOldPrice / 100));
 
         // Показываем блок с ценами для 1 листа/единицы
         document.getElementById('calculatedPricesBlock')?.classList.remove('d-none');
         document.getElementById('calcCostPrice').textContent = App.formatPrice(costPrice);
-        document.getElementById('calcBasePrice').textContent = App.formatPrice(basePrice);
         document.getElementById('calcMinPrice').textContent = App.formatPrice(unitMinPrice);
         document.getElementById('calcYourPrice').textContent = App.formatPrice(unitYourPrice);
+        document.getElementById('calcOldPrice').textContent = App.formatPrice(unitOldPrice);
 
         // Пересчитываем цены для каждого артикула
         // cost = (cost_price / pieces_per_sheet) × quantity_in_pack
@@ -222,6 +255,9 @@ const OzonCalculator = {
 
             // Ваша цена = минимальная × (1 + доп.наценка)
             article.calculated_your_price = this.roundPrice(article.calculated_min_price * (1 + markupYour / 100));
+
+            // Цена до скидки = ваша цена × (1 + наценка old_price)
+            article.calculated_old_price = this.roundPrice(article.calculated_your_price * (1 + markupOldPrice / 100));
 
             // Сохраняем себестоимость для отображения
             article.calculated_cost = articleCost;
@@ -269,7 +305,7 @@ const OzonCalculator = {
         if (this.articles.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="10" class="text-center text-muted py-5">
+                    <td colspan="11" class="text-center text-muted py-5">
                         <i class="bi bi-inbox display-4"></i>
                         <p class="mt-3">
                             ${this.selectedProduct
@@ -311,6 +347,13 @@ const OzonCalculator = {
                 if (article) {
                     article.stock = parseInt(e.target.value) || 0;
                 }
+            });
+        });
+
+        // Привязываем события изменения минимальной цены
+        tbody.querySelectorAll('.min-price-input').forEach(input => {
+            input.addEventListener('input', (e) => {
+                this.onMinPriceChange(e.target);
             });
         });
 
@@ -361,7 +404,7 @@ const OzonCalculator = {
                 <td>
                     <code>${App.escapeHtml(article.marketplace_offer_id || article.marketplace_product_id || '')}</code>
                 </td>
-                <td class="text-truncate" style="max-width: 200px;" title="${App.escapeHtml(article.marketplace_name || '')}">
+                <td class="text-truncate" style="max-width: 180px;" title="${App.escapeHtml(article.marketplace_name || '')}">
                     ${App.escapeHtml(article.marketplace_name || '-')}
                 </td>
                 <td class="text-center">
@@ -373,11 +416,19 @@ const OzonCalculator = {
                         ${piecesPerSheet}/${quantityInPack}
                     </button>
                 </td>
-                <td class="text-end fw-bold">
-                    ${App.formatPrice(article.calculated_min_price || 0)}
+                <td class="text-end">
+                    <input type="number" class="form-control form-control-sm min-price-input text-end fw-bold text-warning"
+                           value="${article.calculated_min_price || 0}"
+                           data-id="${article.mapping_id}"
+                           data-original="${article.calculated_min_price || 0}"
+                           min="0" step="1"
+                           style="width: 100px; display: inline-block;">
                 </td>
-                <td class="text-end fw-bold">
+                <td class="text-end fw-bold text-info your-price-cell" data-value="${article.calculated_your_price || 0}">
                     ${App.formatPrice(article.calculated_your_price || 0)}
+                </td>
+                <td class="text-end text-old-price old-price-cell" data-value="${article.calculated_old_price || 0}">
+                    ${App.formatPrice(article.calculated_old_price || 0)}
                 </td>
                 <td class="text-end">
                     ${article.mp_price > 0 ? App.formatPrice(article.mp_price) : '<span class="text-muted">-</span>'}
@@ -387,7 +438,7 @@ const OzonCalculator = {
                            value="${article.stock || 0}"
                            data-id="${article.mapping_id}"
                            min="0"
-                           style="width: 80px; display: inline-block;">
+                           style="width: 70px; display: inline-block;">
                 </td>
                 <td class="text-center">
                     ${statusHtml}
@@ -569,7 +620,7 @@ const OzonCalculator = {
                         offer_id: a.marketplace_offer_id,
                         price: a.calculated_your_price,
                         min_price: a.calculated_min_price,
-                        old_price: Math.round(a.calculated_your_price * 1.15), // Старая цена +15%
+                        old_price: a.calculated_old_price, // Рассчитанная цена до скидки
                         stock: a.stock || 0,
                         mapping_id: a.mapping_id,
                         our_product_id: this.selectedProduct.id
@@ -754,6 +805,7 @@ const OzonCalculator = {
     /**
      * Автозаполнение pieces_per_sheet и quantity_in_pack из названий артикулов
      * Парсит размеры (760x760) и количество (5шт) из названий на Ozon
+     * Использует справочник раскроя для получения фактического количества кусочков
      */
     async autoFillFromNames() {
         if (!this.selectedProduct) {
@@ -766,18 +818,25 @@ const OzonCalculator = {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
+        // Получаем выбранный размер листа из справочника
+        const sheetSelect = document.getElementById('sheetSelect');
+        const selectedOption = sheetSelect?.selectedOptions[0];
+        const baseWidth = parseInt(selectedOption?.dataset?.width) || 1520;
+        const baseHeight = parseInt(selectedOption?.dataset?.height) || 1520;
+
         try {
             const result = await App.fetch('/api/ozon/auto-fill-pieces', {
                 method: 'POST',
                 body: {
                     product_id: this.selectedProduct.id,
-                    base_width: 1520,
-                    base_height: 1520
+                    base_width: baseWidth,
+                    base_height: baseHeight
                 }
             });
 
             if (result.success) {
-                App.showToast(`Обновлено ${result.updated} артикулов`, 'success');
+                const sheetInfo = `(лист ${baseWidth}×${baseHeight})`;
+                App.showToast(`Обновлено ${result.updated} артикулов ${sheetInfo}`, 'success');
                 // Перезагружаем артикулы чтобы увидеть обновлённые данные
                 await this.loadArticles(this.selectedProduct.id);
                 this.recalculatePrices();
@@ -984,5 +1043,600 @@ const OzonCalculator = {
     }
 };
 
+/**
+ * Справочник раскроя листов
+ * Управляет соотношениями: исходный лист → размер кусочка → количество
+ */
+const CuttingReference = {
+    sheets: [],              // Список листов пользователя
+    selectedSheetId: null,   // ID выбранного листа
+    selectedSheet: null,     // Данные выбранного листа
+    pieces: [],              // Размеры кусочков для выбранного листа
+
+    // Стандартные размеры листов
+    sheetSizes: {
+        'fanera_fk': { w: 1520, h: 1520 },
+        'fanera_fsf': { w: 2440, h: 1220 },
+        'fanera_fsf_lam': { w: 2500, h: 1250 },
+        'fanera_setch': { w: 2500, h: 1250 },
+        'osb': { w: 2500, h: 1250 },
+        'mdf': { w: 2800, h: 2070 },
+        'lmdf': { w: 2800, h: 2070 },
+        'dvp': { w: 2745, h: 1700 }
+    },
+
+    /**
+     * Инициализация модуля
+     */
+    init() {
+        this.bindEvents();
+    },
+
+    /**
+     * Привязка обработчиков событий
+     */
+    bindEvents() {
+        // Переключение на вкладку - загрузка листов
+        document.getElementById('cutting-tab')?.addEventListener('shown.bs.tab', () => {
+            this.loadSheets();
+        });
+
+        // Автоподстановка размеров при выборе типа материала
+        document.getElementById('newSheetType')?.addEventListener('change', (e) => {
+            this.autoFillSheetSize(e.target.value);
+        });
+
+        // Добавить лист
+        document.getElementById('btnAddSheet')?.addEventListener('click', () => this.addSheet());
+
+        // Добавить размер кусочка
+        document.getElementById('btnAddPiece')?.addEventListener('click', () => this.showAddPieceModal());
+
+        // Загрузить размеры из артикулов
+        document.getElementById('btnLoadFromArticles')?.addEventListener('click', () => this.loadFromArticles());
+
+        // Сохранить изменения
+        document.getElementById('btnSavePieces')?.addEventListener('click', () => this.savePieces());
+
+        // Сохранить новый размер
+        document.getElementById('btnSaveNewPiece')?.addEventListener('click', () => this.saveNewPiece());
+
+        // Пресет размера кусочка
+        document.getElementById('addPiecePreset')?.addEventListener('change', (e) => {
+            if (e.target.value) {
+                const [w, h] = e.target.value.split('x').map(Number);
+                document.getElementById('addPieceWidth').value = w;
+                document.getElementById('addPieceHeight').value = h;
+                this.updateAddPieceCalc();
+            }
+        });
+
+        // Live preview при вводе размеров
+        ['addPieceWidth', 'addPieceHeight'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', () => this.updateAddPieceCalc());
+        });
+    },
+
+    /**
+     * Автоподстановка размеров листа
+     */
+    autoFillSheetSize(materialType) {
+        const size = this.sheetSizes[materialType];
+        if (size) {
+            document.getElementById('newSheetWidth').value = size.w;
+            document.getElementById('newSheetHeight').value = size.h;
+        }
+    },
+
+    /**
+     * Загрузить список листов
+     */
+    async loadSheets() {
+        try {
+            const response = await App.fetch('/api/cutting/sheets');
+            if (response.success) {
+                this.sheets = response.sheets || [];
+                this.renderSheetsList();
+            }
+        } catch (e) {
+            console.error('Ошибка загрузки листов:', e);
+            App.showToast('Ошибка загрузки листов', 'danger');
+        }
+    },
+
+    /**
+     * Отрисовать список листов
+     */
+    renderSheetsList() {
+        const container = document.getElementById('sheetsList');
+        if (!container) return;
+
+        if (this.sheets.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted py-3">Нет листов. Добавьте первый!</div>';
+            return;
+        }
+
+        container.innerHTML = this.sheets.map(sheet => `
+            <a href="#" class="list-group-item list-group-item-action bg-dark border-secondary ${sheet.id == this.selectedSheetId ? 'active' : ''}"
+               data-sheet-id="${sheet.id}" onclick="CuttingReference.selectSheet(${sheet.id}); return false;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>${this.escapeHtml(sheet.material_name)}</strong><br>
+                        <small class="text-muted">${sheet.sheet_width}×${sheet.sheet_height} мм</small>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger btn-sm"
+                            onclick="event.preventDefault(); event.stopPropagation(); CuttingReference.deleteSheet(${sheet.id});">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </a>
+        `).join('');
+    },
+
+    /**
+     * Добавить новый лист
+     */
+    async addSheet() {
+        const type = document.getElementById('newSheetType').value;
+        const typeSelect = document.getElementById('newSheetType');
+        const name = typeSelect.options[typeSelect.selectedIndex].text;
+        const width = parseInt(document.getElementById('newSheetWidth').value) || 0;
+        const height = parseInt(document.getElementById('newSheetHeight').value) || 0;
+
+        if (!width || !height) {
+            App.showToast('Укажите размеры листа', 'warning');
+            return;
+        }
+
+        try {
+            const response = await App.fetch('/api/cutting/sheets', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    material_type: type,
+                    material_name: name,
+                    sheet_width: width,
+                    sheet_height: height
+                })
+            });
+
+            if (response.success) {
+                App.showToast('Лист добавлен', 'success');
+                this.loadSheets();
+            } else {
+                App.showToast(response.message || 'Ошибка', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка добавления: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Удалить лист
+     */
+    async deleteSheet(sheetId) {
+        if (!confirm('Удалить этот лист и все его размеры?')) return;
+
+        try {
+            const response = await App.fetch('/api/cutting/sheets/delete', {
+                method: 'POST',
+                body: new URLSearchParams({ sheet_id: sheetId })
+            });
+
+            if (response.success) {
+                App.showToast('Лист удалён', 'success');
+                if (this.selectedSheetId == sheetId) {
+                    this.selectedSheetId = null;
+                    this.selectedSheet = null;
+                    this.pieces = [];
+                    this.renderPiecesTable();
+                    document.getElementById('selectedSheetName').textContent = 'выберите лист';
+                    document.getElementById('btnAddPiece').disabled = true;
+                    document.getElementById('btnLoadFromArticles').disabled = true;
+                    document.getElementById('btnSavePieces').disabled = true;
+                }
+                this.loadSheets();
+            } else {
+                App.showToast(response.message || 'Ошибка', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка удаления: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Выбрать лист
+     */
+    async selectSheet(sheetId) {
+        this.selectedSheetId = sheetId;
+        this.renderSheetsList();
+
+        // Активируем кнопки
+        document.getElementById('btnAddPiece').disabled = false;
+        document.getElementById('btnLoadFromArticles').disabled = false;
+        document.getElementById('btnSavePieces').disabled = false;
+
+        // Загружаем раскрой
+        try {
+            const response = await App.fetch(`/api/cutting/pieces?sheet_id=${sheetId}`);
+            if (response.success) {
+                this.selectedSheet = response.sheet;
+                this.pieces = response.pieces || [];
+                document.getElementById('selectedSheetName').textContent =
+                    `${response.sheet.material_name} ${response.sheet.sheet_width}×${response.sheet.sheet_height}`;
+                this.renderPiecesTable();
+            }
+        } catch (e) {
+            console.error('Ошибка загрузки раскроя:', e);
+            App.showToast('Ошибка загрузки раскроя', 'danger');
+        }
+    },
+
+    /**
+     * Отрисовать таблицу раскроя
+     */
+    renderPiecesTable() {
+        const tbody = document.getElementById('piecesTableBody');
+        if (!tbody) return;
+
+        if (this.pieces.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center text-muted py-4">
+                        Нет размеров. Добавьте вручную или загрузите из артикулов.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = this.pieces.map(piece => {
+            const diff = piece.actual_qty != piece.calculated_qty;
+            // Сохраняем данные piece в data-атрибутах для редактирования
+            return `
+                <tr data-piece-id="${piece.id}"
+                    data-piece-name="${this.escapeHtml(piece.piece_name || '')}"
+                    data-piece-width="${piece.piece_width}"
+                    data-piece-height="${piece.piece_height}"
+                    data-actual-qty="${piece.actual_qty}">
+                    <td>${this.escapeHtml(piece.piece_name || '-')}</td>
+                    <td class="text-center">${piece.piece_width}×${piece.piece_height}</td>
+                    <td class="text-center text-muted">${piece.calculated_qty} шт</td>
+                    <td class="text-center">
+                        <input type="number" class="form-control form-control-sm piece-actual-qty text-center"
+                               value="${piece.actual_qty}" min="1" style="width: 80px; display: inline-block;">
+                        ${diff ? '<i class="bi bi-exclamation-triangle text-warning ms-1" title="Отличается от авто-расчёта"></i>' : ''}
+                    </td>
+                    <td class="text-center">
+                        <button type="button" class="btn btn-outline-secondary btn-sm me-1"
+                                onclick="CuttingReference.editPiece(${piece.id})" title="Редактировать">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-danger btn-sm"
+                                onclick="CuttingReference.deletePiece(${piece.id})" title="Удалить">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    },
+
+    /**
+     * Показать модальное окно добавления размера
+     */
+    showAddPieceModal() {
+        if (!this.selectedSheet) {
+            App.showToast('Сначала выберите лист', 'warning');
+            return;
+        }
+
+        // Очищаем поля (qty пустой - рассчитается автоматически)
+        document.getElementById('addPieceName').value = '';
+        document.getElementById('addPiecePreset').value = '';
+        document.getElementById('addPieceWidth').value = '';
+        document.getElementById('addPieceHeight').value = '';
+        document.getElementById('addPieceQty').value = '';
+        document.getElementById('addPieceCalc').textContent = '-';
+
+        const modal = new bootstrap.Modal(document.getElementById('addPieceModal'));
+        modal.show();
+    },
+
+    /**
+     * Обновить авто-расчёт в модалке
+     */
+    updateAddPieceCalc() {
+        if (!this.selectedSheet) return;
+
+        const pieceW = parseInt(document.getElementById('addPieceWidth')?.value) || 0;
+        const pieceH = parseInt(document.getElementById('addPieceHeight')?.value) || 0;
+
+        if (pieceW > 0 && pieceH > 0) {
+            const calc = this.calculatePieces(
+                this.selectedSheet.sheet_width, this.selectedSheet.sheet_height,
+                pieceW, pieceH
+            );
+            document.getElementById('addPieceCalc').textContent = calc;
+            document.getElementById('addPieceQty').value = calc;
+        } else {
+            document.getElementById('addPieceCalc').textContent = '-';
+        }
+    },
+
+    /**
+     * Сохранить новый размер
+     */
+    async saveNewPiece() {
+        const nameEl = document.getElementById('addPieceName');
+        const widthEl = document.getElementById('addPieceWidth');
+        const heightEl = document.getElementById('addPieceHeight');
+        const qtyEl = document.getElementById('addPieceQty');
+
+        const name = nameEl?.value?.trim() || '';
+        const width = parseInt(widthEl?.value) || 0;
+        const height = parseInt(heightEl?.value) || 0;
+        let qty = parseInt(qtyEl?.value) || 0;
+
+        console.log('saveNewPiece:', { name, width, height, qty, sheetId: this.selectedSheetId });
+
+        if (!this.selectedSheetId) {
+            App.showToast('Сначала выберите лист', 'warning');
+            return;
+        }
+
+        if (!width || width <= 0) {
+            App.showToast('Укажите ширину кусочка', 'warning');
+            widthEl?.focus();
+            return;
+        }
+
+        if (!height || height <= 0) {
+            App.showToast('Укажите высоту кусочка', 'warning');
+            heightEl?.focus();
+            return;
+        }
+
+        // Если qty не указан — рассчитываем автоматически
+        if (qty <= 0 && this.selectedSheet) {
+            qty = this.calculatePieces(
+                this.selectedSheet.sheet_width, this.selectedSheet.sheet_height,
+                width, height
+            );
+        }
+
+        // Минимум 1
+        if (qty < 1) qty = 1;
+
+        const pieceName = name || `${width}×${height}`;
+
+        try {
+            const response = await App.fetch('/api/cutting/pieces', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    sheet_id: this.selectedSheetId,
+                    piece_name: pieceName,
+                    piece_width: width,
+                    piece_height: height,
+                    actual_qty: qty
+                })
+            });
+
+            if (response.success) {
+                App.showToast('Размер добавлен', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('addPieceModal'))?.hide();
+                this.selectSheet(this.selectedSheetId);
+            } else {
+                App.showToast(response.message || 'Ошибка', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка добавления: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Удалить размер
+     */
+    async deletePiece(pieceId) {
+        if (!confirm('Удалить этот размер?')) return;
+
+        try {
+            const response = await App.fetch('/api/cutting/pieces/delete', {
+                method: 'POST',
+                body: new URLSearchParams({ piece_id: pieceId })
+            });
+
+            if (response.success) {
+                App.showToast('Размер удалён', 'success');
+                this.selectSheet(this.selectedSheetId);
+            } else {
+                App.showToast(response.message || 'Ошибка', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка удаления: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Загрузить размеры из артикулов Ozon
+     */
+    async loadFromArticles() {
+        if (!this.selectedSheetId) {
+            App.showToast('Сначала выберите лист слева', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('btnLoadFromArticles');
+        const originalHtml = btn?.innerHTML || '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        }
+
+        try {
+            const response = await App.fetch('/api/cutting/load-from-articles', {
+                method: 'POST',
+                body: new URLSearchParams({ sheet_id: String(this.selectedSheetId) })
+            });
+
+            if (response.success) {
+                App.showToast(response.message || 'Размеры загружены', 'success');
+                this.selectSheet(this.selectedSheetId);
+            } else {
+                App.showToast(response.message || 'Ошибка загрузки', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка загрузки: ' + e.message, 'danger');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+    },
+
+    /**
+     * Сохранить изменения в таблице
+     */
+    async savePieces() {
+        const rows = document.querySelectorAll('#piecesTableBody tr[data-piece-id]');
+        const pieces = [];
+
+        rows.forEach(row => {
+            const input = row.querySelector('.piece-actual-qty');
+            if (input) {
+                pieces.push({
+                    id: row.dataset.pieceId,
+                    actual_qty: parseInt(input.value) || 1
+                });
+            }
+        });
+
+        if (pieces.length === 0) {
+            App.showToast('Нечего сохранять', 'info');
+            return;
+        }
+
+        try {
+            const response = await App.fetch('/api/cutting/pieces/bulk', {
+                method: 'POST',
+                body: new URLSearchParams({ pieces: JSON.stringify(pieces) })
+            });
+
+            if (response.success) {
+                App.showToast(`Сохранено: ${response.updated}`, 'success');
+                this.selectSheet(this.selectedSheetId);
+            } else {
+                App.showToast(response.message || 'Ошибка', 'danger');
+            }
+        } catch (e) {
+            App.showToast('Ошибка сохранения: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Открыть модальное окно редактирования размера
+     */
+    editPiece(pieceId) {
+        // Находим строку с данными
+        const row = document.querySelector(`tr[data-piece-id="${pieceId}"]`);
+        if (!row) {
+            App.showToast('Размер не найден', 'danger');
+            return;
+        }
+
+        // Читаем данные из data-атрибутов
+        document.getElementById('editPieceId').value = pieceId;
+        document.getElementById('editPieceName').value = row.dataset.pieceName || '';
+        document.getElementById('editPieceWidth').value = row.dataset.pieceWidth || '';
+        document.getElementById('editPieceHeight').value = row.dataset.pieceHeight || '';
+        document.getElementById('editPieceQty').value = row.dataset.actualQty || '';
+
+        const modal = new bootstrap.Modal(document.getElementById('editPieceModal'));
+        modal.show();
+    },
+
+    /**
+     * Сохранить изменения размера
+     */
+    async updatePiece() {
+        const pieceId = document.getElementById('editPieceId').value;
+        const name = document.getElementById('editPieceName').value.trim();
+        const width = parseInt(document.getElementById('editPieceWidth').value) || 0;
+        const height = parseInt(document.getElementById('editPieceHeight').value) || 0;
+        let qty = parseInt(document.getElementById('editPieceQty').value) || 0;
+
+        if (!pieceId) {
+            App.showToast('Ошибка: не указан ID', 'danger');
+            return;
+        }
+
+        if (!width || width <= 0) {
+            App.showToast('Укажите ширину кусочка', 'warning');
+            return;
+        }
+
+        if (!height || height <= 0) {
+            App.showToast('Укажите высоту кусочка', 'warning');
+            return;
+        }
+
+        // Если qty не указан — рассчитываем
+        if (qty <= 0 && this.selectedSheet) {
+            qty = this.calculatePieces(
+                this.selectedSheet.sheet_width, this.selectedSheet.sheet_height,
+                width, height
+            );
+        }
+        if (qty < 1) qty = 1;
+
+        try {
+            const response = await App.fetch('/api/cutting/pieces/update', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    piece_id: pieceId,
+                    piece_name: name || `${width}×${height}`,
+                    piece_width: width,
+                    piece_height: height,
+                    actual_qty: qty
+                })
+            });
+
+            if (response.success) {
+                App.showToast('Размер обновлён', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('editPieceModal'))?.hide();
+                this.selectSheet(this.selectedSheetId); // Перезагрузить таблицу
+            } else {
+                App.showToast(response.message || 'Ошибка обновления', 'danger');
+            }
+        } catch (e) {
+            console.error('updatePiece error:', e);
+            App.showToast('Ошибка обновления: ' + e.message, 'danger');
+        }
+    },
+
+    /**
+     * Рассчитать количество кусочков с учётом поворота
+     */
+    calculatePieces(sheetW, sheetH, pieceW, pieceH) {
+        // Вариант 1: стандартная ориентация
+        const total1 = Math.floor(sheetW / pieceW) * Math.floor(sheetH / pieceH);
+        // Вариант 2: повёрнутая ориентация
+        const total2 = Math.floor(sheetW / pieceH) * Math.floor(sheetH / pieceW);
+        return Math.max(1, Math.max(total1, total2));
+    },
+
+    /**
+     * Экранирование HTML
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+};
+
 // Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => OzonCalculator.init());
+document.addEventListener('DOMContentLoaded', () => {
+    OzonCalculator.init();
+    CuttingReference.init();
+});

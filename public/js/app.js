@@ -368,6 +368,10 @@ const App = {
         if (options.method === 'POST' && window.csrfToken) {
             if (options.body instanceof FormData) {
                 options.body.append('csrf_token', window.csrfToken);
+            } else if (options.body instanceof URLSearchParams) {
+                // URLSearchParams - form-encoded данные
+                options.body.append('csrf_token', window.csrfToken);
+                defaultOptions.headers['Content-Type'] = 'application/x-www-form-urlencoded';
             } else {
                 defaultOptions.headers['Content-Type'] = 'application/json';
                 if (typeof options.body === 'object') {

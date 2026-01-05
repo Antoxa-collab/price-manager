@@ -813,6 +813,136 @@ try {
             jsonResponse(['success' => true, 'message' => 'Наценки сохранены']);
             break;
 
+        // Получение настроек раскроя для товара
+        case '/api/ozon/cutting-settings':
+            $auth->requireLogin();
+
+            $productId = (int)get('product_id', 0);
+
+            if ($productId <= 0) {
+                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+            }
+
+            try {
+                $db = Database::getInstance()->getConnection();
+
+                // Получаем информацию о товаре для определения размеров листа по умолчанию
+                $stmt = $db->prepare("SELECT name, cost_price FROM products WHERE id = ?");
+                $stmt->execute([$productId]);
+                $product = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$product) {
+                    jsonResponse(['success' => false, 'message' => 'Товар не найден']);
+                }
+
+                // Определяем размер листа по умолчанию из названия товара
+                $defaultSheet = OzonProductCache::getDefaultSheetSize($product['name']);
+
+                // Получаем все сопоставления для этого товара с настройками раскроя
+                $stmt = $db->prepare("
+                    SELECT pm.id, pm.marketplace_sku, pm.marketplace_name,
+                           pm.pieces_per_sheet, pm.quantity_in_pack,
+                           pm.sheet_width, pm.sheet_height, pm.piece_width, pm.piece_height
+                    FROM product_mappings pm
+                    WHERE pm.product_id = ? AND pm.marketplace = 'ozon'
+                    ORDER BY pm.marketplace_name
+                ");
+                $stmt->execute([$productId]);
+                $mappings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                jsonResponse([
+                    'success' => true,
+                    'product' => $product,
+                    'default_sheet' => $defaultSheet,
+                    'mappings' => $mappings
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'message' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Обновление настроек раскроя для артикула
+        case '/api/ozon/update-cutting-settings':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $mappingId = (int)post('mapping_id', 0);
+            $sheetWidth = post('sheet_width') !== null ? (int)post('sheet_width') : null;
+            $sheetHeight = post('sheet_height') !== null ? (int)post('sheet_height') : null;
+            $pieceWidth = post('piece_width') !== null ? (int)post('piece_width') : null;
+            $pieceHeight = post('piece_height') !== null ? (int)post('piece_height') : null;
+
+            if ($mappingId <= 0) {
+                jsonResponse(['success' => false, 'message' => 'Укажите mapping_id']);
+            }
+
+            try {
+                $db = Database::getInstance()->getConnection();
+
+                // Рассчитываем pieces_per_sheet если заданы все размеры
+                $piecesPerSheet = null;
+                if ($sheetWidth && $sheetHeight && $pieceWidth && $pieceHeight) {
+                    $piecesPerSheet = OzonProductCache::calculatePiecesPerSheet(
+                        $sheetWidth, $sheetHeight, $pieceWidth, $pieceHeight
+                    );
+                }
+
+                $stmt = $db->prepare("
+                    UPDATE product_mappings
+                    SET sheet_width = ?, sheet_height = ?, piece_width = ?, piece_height = ?,
+                        pieces_per_sheet = COALESCE(?, pieces_per_sheet),
+                        updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $stmt->execute([$sheetWidth, $sheetHeight, $pieceWidth, $pieceHeight, $piecesPerSheet, $mappingId]);
+
+                jsonResponse([
+                    'success' => true,
+                    'message' => 'Настройки раскроя сохранены',
+                    'pieces_per_sheet' => $piecesPerSheet
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'message' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Массовое обновление настроек раскроя для всех артикулов товара
+        case '/api/ozon/bulk-cutting-settings':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $productId = (int)post('product_id', 0);
+            $sheetWidth = (int)post('sheet_width', 0);
+            $sheetHeight = (int)post('sheet_height', 0);
+
+            if ($productId <= 0) {
+                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+            }
+
+            if ($sheetWidth <= 0 || $sheetHeight <= 0) {
+                jsonResponse(['success' => false, 'message' => 'Укажите размеры листа']);
+            }
+
+            try {
+                $cache = new OzonProductCache();
+                $updated = $cache->autoFillPiecesPerSheet($productId, $sheetWidth, $sheetHeight);
+
+                jsonResponse([
+                    'success' => true,
+                    'updated' => $updated,
+                    'message' => "Обновлено {$updated} артикулов"
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'message' => $e->getMessage()], 500);
+            }
+            break;
+
         // Сохранение нового товара
         case '/api/ozon/save-product':
             $auth->requireLogin();
@@ -852,6 +982,453 @@ try {
                 'message' => 'Товар добавлен',
                 'product_id' => $productId
             ]);
+            break;
+
+        // ==================== Cutting Reference API ====================
+
+        // Список листов пользователя
+        case '/api/cutting/sheets':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (isMethod('GET')) {
+                try {
+                    $db = Database::getInstance()->getConnection();
+                    $stmt = $db->prepare("
+                        SELECT id, material_type, material_name, sheet_width, sheet_height
+                        FROM cutting_sheets
+                        WHERE user_id = ? AND is_active = 1
+                        ORDER BY material_name
+                    ");
+                    $stmt->execute([$userId]);
+                    $sheets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                    jsonResponse(['success' => true, 'sheets' => $sheets]);
+                } catch (PDOException $e) {
+                    // Таблица не существует — возвращаем пустой список
+                    if (strpos($e->getMessage(), "doesn't exist") !== false ||
+                        strpos($e->getMessage(), 'Base table or view not found') !== false) {
+                        jsonResponse(['success' => true, 'sheets' => [], 'warning' => 'Таблица cutting_sheets не создана. Примените миграцию 016.']);
+                    }
+                    throw $e;
+                }
+            }
+
+            if (isMethod('POST')) {
+                $materialType = trim(post('material_type', ''));
+                $materialName = trim(post('material_name', ''));
+                $sheetWidth = (int)post('sheet_width', 0);
+                $sheetHeight = (int)post('sheet_height', 0);
+
+                if (!$materialType || !$materialName || !$sheetWidth || !$sheetHeight) {
+                    jsonResponse(['success' => false, 'message' => 'Заполните все поля']);
+                }
+
+                $db = Database::getInstance()->getConnection();
+
+                // Проверяем уникальность
+                $stmt = $db->prepare("
+                    SELECT id FROM cutting_sheets
+                    WHERE user_id = ? AND material_type = ? AND sheet_width = ? AND sheet_height = ?
+                ");
+                $stmt->execute([$userId, $materialType, $sheetWidth, $sheetHeight]);
+                if ($stmt->fetch()) {
+                    jsonResponse(['success' => false, 'message' => 'Такой лист уже существует']);
+                }
+
+                $stmt = $db->prepare("
+                    INSERT INTO cutting_sheets (user_id, material_type, material_name, sheet_width, sheet_height)
+                    VALUES (?, ?, ?, ?, ?)
+                ");
+                $stmt->execute([$userId, $materialType, $materialName, $sheetWidth, $sheetHeight]);
+
+                jsonResponse(['success' => true, 'id' => $db->lastInsertId(), 'message' => 'Лист добавлен']);
+            }
+            break;
+
+        // Удаление листа
+        case '/api/cutting/sheets/delete':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $sheetId = (int)post('sheet_id', 0);
+            if (!$sheetId) {
+                jsonResponse(['success' => false, 'message' => 'Не указан sheet_id']);
+            }
+
+            $db = Database::getInstance()->getConnection();
+            $stmt = $db->prepare("DELETE FROM cutting_sheets WHERE id = ? AND user_id = ?");
+            $stmt->execute([$sheetId, $userId]);
+
+            jsonResponse(['success' => true, 'message' => 'Лист удалён']);
+            break;
+
+        // Раскрой для конкретного листа
+        case '/api/cutting/pieces':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (isMethod('GET')) {
+                $sheetId = (int)get('sheet_id', 0);
+                if (!$sheetId) {
+                    jsonResponse(['success' => false, 'message' => 'Не указан sheet_id']);
+                }
+
+                $db = Database::getInstance()->getConnection();
+
+                // Проверяем принадлежность листа
+                $stmt = $db->prepare("SELECT * FROM cutting_sheets WHERE id = ? AND user_id = ?");
+                $stmt->execute([$sheetId, $userId]);
+                $sheet = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$sheet) {
+                    jsonResponse(['success' => false, 'message' => 'Лист не найден']);
+                }
+
+                // Получаем раскрой
+                $stmt = $db->prepare("
+                    SELECT id, piece_name, piece_width, piece_height, calculated_qty, actual_qty
+                    FROM cutting_pieces
+                    WHERE sheet_id = ?
+                    ORDER BY piece_width, piece_height
+                ");
+                $stmt->execute([$sheetId]);
+                $pieces = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                jsonResponse(['success' => true, 'sheet' => $sheet, 'pieces' => $pieces]);
+            }
+
+            if (isMethod('POST')) {
+                $sheetId = (int)post('sheet_id', 0);
+                $pieceName = trim(post('piece_name', ''));
+                $pieceWidth = (int)post('piece_width', 0);
+                $pieceHeight = (int)post('piece_height', 0);
+                $actualQty = (int)post('actual_qty', 0);
+
+                // sheet_id и размеры обязательны. actual_qty может быть 0 - рассчитаем автоматически
+                if (!$sheetId || !$pieceWidth || !$pieceHeight) {
+                    jsonResponse(['success' => false, 'message' => 'Укажите размеры кусочка']);
+                }
+
+                $db = Database::getInstance()->getConnection();
+
+                // Проверяем принадлежность листа
+                $stmt = $db->prepare("SELECT * FROM cutting_sheets WHERE id = ? AND user_id = ?");
+                $stmt->execute([$sheetId, $userId]);
+                $sheet = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$sheet) {
+                    jsonResponse(['success' => false, 'message' => 'Лист не найден']);
+                }
+
+                // Авто-расчёт
+                $calculatedQty = OzonProductCache::calculatePiecesPerSheet(
+                    $sheet['sheet_width'], $sheet['sheet_height'],
+                    $pieceWidth, $pieceHeight
+                );
+
+                // Если actual_qty не указан (0), используем calculated
+                if ($actualQty <= 0) {
+                    $actualQty = max(1, $calculatedQty);
+                }
+
+                // Upsert
+                $stmt = $db->prepare("
+                    INSERT INTO cutting_pieces (sheet_id, piece_name, piece_width, piece_height, calculated_qty, actual_qty)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        piece_name = VALUES(piece_name),
+                        calculated_qty = VALUES(calculated_qty),
+                        actual_qty = VALUES(actual_qty),
+                        updated_at = NOW()
+                ");
+                $stmt->execute([$sheetId, $pieceName, $pieceWidth, $pieceHeight, $calculatedQty, $actualQty]);
+
+                jsonResponse(['success' => true, 'message' => 'Сохранено', 'calculated_qty' => $calculatedQty]);
+            }
+            break;
+
+        // Удаление размера кусочка
+        case '/api/cutting/pieces/delete':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $pieceId = (int)post('piece_id', 0);
+            if (!$pieceId) {
+                jsonResponse(['success' => false, 'message' => 'Не указан piece_id']);
+            }
+
+            $db = Database::getInstance()->getConnection();
+
+            // Проверяем принадлежность через sheet
+            $stmt = $db->prepare("
+                SELECT cp.id FROM cutting_pieces cp
+                JOIN cutting_sheets cs ON cp.sheet_id = cs.id
+                WHERE cp.id = ? AND cs.user_id = ?
+            ");
+            $stmt->execute([$pieceId, $userId]);
+
+            if (!$stmt->fetch()) {
+                jsonResponse(['success' => false, 'message' => 'Размер не найден']);
+            }
+
+            $stmt = $db->prepare("DELETE FROM cutting_pieces WHERE id = ?");
+            $stmt->execute([$pieceId]);
+
+            jsonResponse(['success' => true, 'message' => 'Размер удалён']);
+            break;
+
+        // Обновление одного размера
+        case '/api/cutting/pieces/update':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $pieceId = (int)post('piece_id', 0);
+            $pieceName = trim(post('piece_name', ''));
+            $pieceWidth = (int)post('piece_width', 0);
+            $pieceHeight = (int)post('piece_height', 0);
+            $actualQty = (int)post('actual_qty', 0);
+
+            if (!$pieceId) {
+                jsonResponse(['success' => false, 'message' => 'Не указан piece_id']);
+            }
+
+            if (!$pieceWidth || !$pieceHeight) {
+                jsonResponse(['success' => false, 'message' => 'Укажите ширину и высоту']);
+            }
+
+            // Название по умолчанию
+            if (!$pieceName) {
+                $pieceName = "{$pieceWidth}×{$pieceHeight}";
+            }
+
+            $db = Database::getInstance()->getConnection();
+
+            // Проверяем принадлежность и получаем sheet_id
+            $stmt = $db->prepare("
+                SELECT cp.id, cp.sheet_id, cs.sheet_width, cs.sheet_height
+                FROM cutting_pieces cp
+                JOIN cutting_sheets cs ON cp.sheet_id = cs.id
+                WHERE cp.id = ? AND cs.user_id = ?
+            ");
+            $stmt->execute([$pieceId, $userId]);
+            $piece = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$piece) {
+                jsonResponse(['success' => false, 'message' => 'Размер не найден']);
+            }
+
+            // Рассчитываем новое количество если не указано
+            if ($actualQty <= 0) {
+                $actualQty = OzonProductCache::calculatePiecesPerSheet(
+                    $piece['sheet_width'], $piece['sheet_height'],
+                    $pieceWidth, $pieceHeight
+                );
+                if ($actualQty < 1) $actualQty = 1;
+            }
+
+            // Обновляем: и размеры, и оба qty поля (как при сохранении bulk)
+            $stmt = $db->prepare("
+                UPDATE cutting_pieces
+                SET piece_name = ?, piece_width = ?, piece_height = ?,
+                    calculated_qty = ?, actual_qty = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmt->execute([$pieceName, $pieceWidth, $pieceHeight, $actualQty, $actualQty, $pieceId]);
+
+            jsonResponse(['success' => true, 'message' => 'Размер обновлён']);
+            break;
+
+        // Массовое обновление раскроя
+        case '/api/cutting/pieces/bulk':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $pieces = post('pieces', []);
+            if (is_string($pieces)) {
+                $pieces = json_decode($pieces, true) ?? [];
+            }
+
+            $db = Database::getInstance()->getConnection();
+            $updated = 0;
+
+            foreach ($pieces as $piece) {
+                $pieceId = (int)($piece['id'] ?? 0);
+                $actualQty = (int)($piece['actual_qty'] ?? 0);
+
+                if (!$pieceId || !$actualQty) continue;
+
+                // Проверяем принадлежность
+                $stmt = $db->prepare("
+                    SELECT cp.id FROM cutting_pieces cp
+                    JOIN cutting_sheets cs ON cp.sheet_id = cs.id
+                    WHERE cp.id = ? AND cs.user_id = ?
+                ");
+                $stmt->execute([$pieceId, $userId]);
+
+                if ($stmt->fetch()) {
+                    // ВАЖНО: перезаписываем И actual_qty И calculated_qty
+                    // После сохранения пользователем его значение становится "правильным"
+                    // Жёлтый треугольник исчезнет, т.к. значения равны
+                    $stmt = $db->prepare("UPDATE cutting_pieces SET actual_qty = ?, calculated_qty = ?, updated_at = NOW() WHERE id = ?");
+                    $stmt->execute([$actualQty, $actualQty, $pieceId]);
+                    $updated++;
+                }
+            }
+
+            jsonResponse(['success' => true, 'updated' => $updated]);
+            break;
+
+        // Загрузить размеры из артикулов Ozon
+        case '/api/cutting/load-from-articles':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $sheetId = (int)post('sheet_id', 0);
+            if (!$sheetId) {
+                jsonResponse(['success' => false, 'message' => 'Не указан sheet_id']);
+            }
+
+            $db = Database::getInstance()->getConnection();
+
+            // Проверяем лист
+            $stmt = $db->prepare("SELECT * FROM cutting_sheets WHERE id = ? AND user_id = ?");
+            $stmt->execute([$sheetId, $userId]);
+            $sheet = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$sheet) {
+                jsonResponse(['success' => false, 'message' => 'Лист не найден']);
+            }
+
+            // Получаем все артикулы Ozon из кэша
+            $stmt = $db->prepare("
+                SELECT DISTINCT offer_id, name
+                FROM marketplace_products_cache
+                WHERE marketplace = 'ozon'
+            ");
+            $stmt->execute();
+            $articles = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $sizes = [];
+            foreach ($articles as $article) {
+                $text = ($article['offer_id'] ?? '') . ' ' . ($article['name'] ?? '');
+                $parsed = OzonProductCache::parseArticleName($text, '', $sheet['sheet_width'], $sheet['sheet_height']);
+
+                if ($parsed['width'] > 0 && $parsed['height'] > 0) {
+                    $key = $parsed['width'] . 'x' . $parsed['height'];
+                    if (!isset($sizes[$key])) {
+                        $sizes[$key] = [
+                            'name' => $parsed['format'] ?? ($parsed['width'] . '×' . $parsed['height']),
+                            'width' => $parsed['width'],
+                            'height' => $parsed['height']
+                        ];
+                    }
+                }
+            }
+
+            // Добавляем уникальные размеры
+            $added = 0;
+            foreach ($sizes as $size) {
+                $calculatedQty = OzonProductCache::calculatePiecesPerSheet(
+                    $sheet['sheet_width'], $sheet['sheet_height'],
+                    $size['width'], $size['height']
+                );
+
+                $stmt = $db->prepare("
+                    SELECT id FROM cutting_pieces
+                    WHERE sheet_id = ? AND piece_width = ? AND piece_height = ?
+                ");
+                $stmt->execute([$sheetId, $size['width'], $size['height']]);
+
+                if (!$stmt->fetch()) {
+                    $stmt = $db->prepare("
+                        INSERT INTO cutting_pieces (sheet_id, piece_name, piece_width, piece_height, calculated_qty, actual_qty)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$sheetId, $size['name'], $size['width'], $size['height'], $calculatedQty, $calculatedQty]);
+                    $added++;
+                }
+            }
+
+            jsonResponse(['success' => true, 'added' => $added, 'message' => "Добавлено размеров: $added"]);
+            break;
+
+        // Поиск в справочнике раскроя
+        case '/api/cutting/lookup':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            $sheetWidth = (int)get('sheet_width', 0);
+            $sheetHeight = (int)get('sheet_height', 0);
+            $pieceWidth = (int)get('piece_width', 0);
+            $pieceHeight = (int)get('piece_height', 0);
+
+            if (!$sheetWidth || !$sheetHeight || !$pieceWidth || !$pieceHeight) {
+                jsonResponse(['success' => false, 'message' => 'Не указаны размеры']);
+            }
+
+            $db = Database::getInstance()->getConnection();
+
+            // Ищем в справочнике (с учётом поворота - width/height могут быть местами)
+            $stmt = $db->prepare("
+                SELECT cp.actual_qty, cp.calculated_qty
+                FROM cutting_pieces cp
+                JOIN cutting_sheets cs ON cp.sheet_id = cs.id
+                WHERE cs.user_id = ?
+                  AND cs.sheet_width = ?
+                  AND cs.sheet_height = ?
+                  AND (
+                      (cp.piece_width = ? AND cp.piece_height = ?)
+                      OR (cp.piece_width = ? AND cp.piece_height = ?)
+                  )
+                LIMIT 1
+            ");
+            $stmt->execute([
+                $userId, $sheetWidth, $sheetHeight,
+                $pieceWidth, $pieceHeight,   // прямое совпадение
+                $pieceHeight, $pieceWidth    // с поворотом на 90°
+            ]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($result) {
+                // Возвращаем ФАКТИЧЕСКОЕ значение (actual_qty)
+                jsonResponse([
+                    'success' => true,
+                    'pieces_per_sheet' => (int)$result['actual_qty'],
+                    'calculated_qty' => (int)$result['calculated_qty'],
+                    'source' => 'reference'
+                ]);
+            } else {
+                // Fallback на авто-расчёт
+                $calculated = OzonProductCache::calculatePiecesPerSheet(
+                    $sheetWidth, $sheetHeight, $pieceWidth, $pieceHeight
+                );
+                jsonResponse([
+                    'success' => true,
+                    'pieces_per_sheet' => $calculated,
+                    'source' => 'calculated'
+                ]);
+            }
             break;
 
         // ==================== Products API ====================

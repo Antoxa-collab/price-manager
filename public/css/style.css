@@ -649,9 +649,14 @@ body {
 }
 
 .metric-card.metric-cost .metric-value { color: #94a3b8; }
-.metric-card.metric-purchase .metric-value { color: #60a5fa; }
 .metric-card.metric-min .metric-value { color: #fbbf24; }
 .metric-card.metric-your .metric-value { color: #34d399; }
+.metric-card.metric-old .metric-value { color: #f97316; }
+
+/* Цвет для зачёркнутой цены (old_price) */
+.text-old-price {
+    color: #f97316 !important;
+}
 
 /* ============================================
    ТАБЛИЦА КАЛЬКУЛЯТОРА — ПОЛНАЯ ПЕРЕРАБОТКА
