@@ -364,8 +364,9 @@ const App = {
             }
         };
 
-        // Добавляем CSRF токен для POST запросов
-        if (options.method === 'POST' && window.csrfToken) {
+        // Добавляем CSRF токен и обрабатываем body для POST, PUT, PATCH, DELETE запросов
+        const methodsWithBody = ['POST', 'PUT', 'PATCH', 'DELETE'];
+        if (methodsWithBody.includes(options.method) && window.csrfToken) {
             if (options.body instanceof FormData) {
                 options.body.append('csrf_token', window.csrfToken);
             } else if (options.body instanceof URLSearchParams) {
