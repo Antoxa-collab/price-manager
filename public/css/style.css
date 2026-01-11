@@ -881,6 +881,27 @@ body {
     box-shadow: 0 0 12px currentColor;
 }
 
+/* КГТ-товары (крупногабаритные) — не принимаются складом */
+.oversized-item {
+    opacity: 0.6;
+    background-color: rgba(255, 193, 7, 0.1) !important;
+}
+
+.oversized-item:hover {
+    background-color: rgba(255, 193, 7, 0.15) !important;
+}
+
+.oversized-item .stock-input {
+    pointer-events: none;
+    background-color: #374151 !important;
+    color: #9ca3af !important;
+}
+
+.oversized-item .article-checkbox {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
 /* Блок управления остатками */
 #stockManagementCard {
     background: linear-gradient(135deg, #1e2533 0%, #252d3a 100%);
@@ -1510,4 +1531,168 @@ tr.row-modified {
 
 #uploadPdfModal .text-muted {
     color: #6c757d !important;
+}
+
+/* ============================================
+   СТРАНИЦА СОПОСТАВЛЕНИЯ ЯНДЕКС.МАРКЕТ
+   ============================================ */
+
+/* Панель массового выбора */
+.bulk-select-panel {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.bulk-select-panel .form-check-label {
+    cursor: pointer;
+    user-select: none;
+}
+
+.bulk-select-panel .form-check-input {
+    cursor: pointer;
+}
+
+/* Счётчик выбранных */
+#ymSelectedCount strong {
+    font-weight: 600;
+    min-width: 30px;
+    display: inline-block;
+}
+
+/* Товар ЯМ в списке */
+.ym-product-item {
+    transition: background-color 0.15s ease;
+    cursor: pointer;
+}
+
+.ym-product-item:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.ym-product-item.selected {
+    background-color: rgba(25, 135, 84, 0.15) !important;
+    border-left: 3px solid #198754 !important;
+}
+
+.ym-product-item.mapped {
+    opacity: 0.6;
+}
+
+.ym-product-item.mapped:hover {
+    opacity: 0.8;
+}
+
+/* Чекбокс товара */
+.ym-product-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.ym-product-checkbox:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Бейдж сопоставления */
+.mapped-info .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+}
+
+/* Активный наш товар */
+.our-product-item.active {
+    background-color: rgba(13, 110, 253, 0.15) !important;
+    border-left: 3px solid #0d6efd !important;
+}
+
+/* Стили для шагов */
+.steps-container .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.steps-container .step-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #2d2d44;
+    border: 2px solid #6c757d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.steps-container .step.active .step-circle {
+    border-color: #ffc107;
+    background: rgba(255, 193, 7, 0.1);
+}
+
+.steps-container .step.completed .step-circle {
+    border-color: #198754;
+    background: #198754;
+    color: white;
+}
+
+.steps-container .step-label {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #6c757d;
+}
+
+.steps-container .step.active .step-label {
+    color: #ffc107;
+}
+
+.steps-container .step.completed .step-label {
+    color: #198754;
+}
+
+.steps-container .step-line {
+    width: 80px;
+    height: 2px;
+    background: #6c757d;
+    margin: 0 10px;
+    margin-top: -20px;
+}
+
+/* Кнопка копирования названия */
+.product-name-wrapper {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.btn-copy-name {
+    background: none;
+    border: none;
+    color: #6c757d;
+    padding: 0;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+
+.list-group-item:hover .btn-copy-name,
+.ym-product-item:hover .btn-copy-name {
+    opacity: 1;
+}
+
+.btn-copy-name:hover {
+    color: #0d6efd;
+}
+
+/* Информация о выбранных */
+.selected-info {
+    font-size: 12px;
+    max-width: 180px;
+}
+
+/* Mapping actions центр */
+.mapping-actions {
+    min-width: 120px;
 }
