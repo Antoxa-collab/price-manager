@@ -39,6 +39,42 @@ $products = $db->fetchAll("
     </div>
 </div>
 
+<!-- Панель массового применения наценок -->
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body py-2">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <span class="text-muted"><i class="bi bi-percent me-1"></i> Массовое применение:</span>
+            </div>
+            <div class="col-auto">
+                <div class="input-group input-group-sm" style="width: 200px;">
+                    <span class="input-group-text bg-dark border-secondary">Наценка мин.</span>
+                    <input type="number" class="form-control bg-dark text-white border-secondary"
+                           id="bulkMarkupMin" step="0.1" min="0" value="20" style="width: 70px;">
+                    <span class="input-group-text bg-dark border-secondary">%</span>
+                    <button class="btn btn-outline-warning btn-sm" type="button" id="applyBulkMarkupMin" title="Применить ко всем">
+                        <i class="bi bi-check-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-auto">
+                <div class="input-group input-group-sm" style="width: 200px;">
+                    <span class="input-group-text bg-dark border-secondary">Доп. наценка</span>
+                    <input type="number" class="form-control bg-dark text-white border-secondary"
+                           id="bulkMarkupExtra" step="0.1" min="0" value="5" style="width: 70px;">
+                    <span class="input-group-text bg-dark border-secondary">%</span>
+                    <button class="btn btn-outline-warning btn-sm" type="button" id="applyBulkMarkupExtra" title="Применить ко всем">
+                        <i class="bi bi-check-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-auto ms-auto">
+                <small class="text-muted" id="bulkMarkupStatus"></small>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Панель поиска -->
 <div class="row mb-3">
     <div class="col-md-6">

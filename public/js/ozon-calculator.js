@@ -18,8 +18,62 @@ const OzonCalculator = {
         this.bindEvents();
         this.loadProducts();
         this.loadSheetSelect();
+        this.loadSettings(); // Загружаем сохранённые настройки наценок
         this.initTooltips();
         console.log('OzonCalculator.init() completed');
+    },
+
+    /**
+     * Загрузка сохранённых настроек калькулятора (наценки)
+     */
+    async loadSettings() {
+        try {
+            const data = await App.fetch('/api/calculator/settings?marketplace=ozon');
+            if (data.success && data.settings) {
+                const markupMin = document.getElementById('markupMin');
+                const markupYour = document.getElementById('markupYour');
+                const markupOldPrice = document.getElementById('markupOldPrice');
+
+                // Загружаем только если значения были сохранены (не дефолтные нули)
+                if (data.settings.markup_min > 0 && markupMin) {
+                    markupMin.value = data.settings.markup_min;
+                }
+                if (data.settings.markup_extra > 0 && markupYour) {
+                    markupYour.value = data.settings.markup_extra;
+                }
+                if (data.settings.discount > 0 && markupOldPrice) {
+                    markupOldPrice.value = data.settings.discount;
+                }
+
+                console.log('OzonCalculator: settings loaded', data.settings);
+            }
+        } catch (e) {
+            console.warn('Не удалось загрузить настройки калькулятора:', e);
+        }
+    },
+
+    /**
+     * Сохранение настроек калькулятора (наценки)
+     */
+    async saveSettings() {
+        const markupMin = parseFloat(document.getElementById('markupMin')?.value) || 0;
+        const markupExtra = parseFloat(document.getElementById('markupYour')?.value) || 0;
+        const discount = parseFloat(document.getElementById('markupOldPrice')?.value) || 0;
+
+        try {
+            await App.fetch('/api/calculator/settings', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    marketplace: 'ozon',
+                    markup_min: markupMin,
+                    markup_extra: markupExtra,
+                    discount: discount
+                })
+            });
+            console.log('OzonCalculator: settings saved');
+        } catch (e) {
+            console.warn('Не удалось сохранить настройки калькулятора:', e);
+        }
     },
 
     /**
@@ -207,9 +261,34 @@ const OzonCalculator = {
             const data = await App.fetch(`/api/ozon/product-articles?product_id=${productId}`);
             this.articles = data.articles || [];
             this.selectedArticles.clear();
+
+            // Загружаем кастомные минимальные цены
+            await this.loadCustomMinPrices(productId);
+
             this.renderArticlesTable();
         } catch (error) {
             App.showToast('Ошибка загрузки артикулов: ' + error.message, 'danger');
+        }
+    },
+
+    /**
+     * Загрузка кастомных минимальных цен для артикулов товара
+     */
+    async loadCustomMinPrices(productId) {
+        try {
+            const data = await App.fetch(`/api/mapping/min-prices?product_id=${productId}&marketplace=ozon`);
+            if (data.success && data.prices) {
+                // data.prices = { mapping_id: min_price, ... }
+                this.articles.forEach(article => {
+                    if (data.prices[article.mapping_id]) {
+                        article.custom_min_price = data.prices[article.mapping_id];
+                        article.has_custom_min_price = true;
+                    }
+                });
+                console.log('OzonCalculator: custom min prices loaded', data.prices);
+            }
+        } catch (e) {
+            console.warn('Не удалось загрузить кастомные мин. цены:', e);
         }
     },
 
@@ -250,8 +329,15 @@ const OzonCalculator = {
             // Себестоимость: (закупка / кол-во из листа) × кол-во в упаковке
             const articleCost = (costPrice / piecesPerSheet) * quantityInPack;
 
-            // Минимальная цена с наценкой
-            article.calculated_min_price = this.roundPrice(articleCost * (1 + markupMin / 100));
+            // Минимальная цена: используем кастомную если была сохранена, иначе рассчитываем
+            if (article.has_custom_min_price && article.custom_min_price > 0) {
+                // Есть сохранённая кастомная цена - используем её
+                article.calculated_min_price = article.custom_min_price;
+                article.min_price_edited = true; // Помечаем как отредактированную
+            } else {
+                // Рассчитываем по формуле
+                article.calculated_min_price = this.roundPrice(articleCost * (1 + markupMin / 100));
+            }
 
             // Ваша цена = минимальная × (1 + доп.наценка)
             article.calculated_your_price = this.roundPrice(article.calculated_min_price * (1 + markupYour / 100));
@@ -324,6 +410,7 @@ const OzonCalculator = {
             article.calculated_your_price = yourPrice;
             article.calculated_old_price = oldPrice;
             article.custom_min_price = newMinPrice; // Помечаем как изменённую вручную
+            article.min_price_edited = true; // Флаг для сохранения в БД
         }
 
         // Подсвечиваем изменённую ячейку
@@ -470,12 +557,14 @@ const OzonCalculator = {
                     </button>
                 </td>
                 <td class="text-end">
-                    <input type="number" class="form-control form-control-sm min-price-input text-end fw-bold text-warning"
+                    <input type="number" class="form-control form-control-sm min-price-input text-end fw-bold text-warning ${article.has_custom_min_price ? 'price-modified' : ''}"
                            value="${article.calculated_min_price || 0}"
                            data-id="${article.mapping_id}"
                            data-original="${article.calculated_min_price || 0}"
                            min="0" step="1"
-                           style="width: 100px; display: inline-block;">
+                           style="width: 100px; display: inline-block;"
+                           title="${article.has_custom_min_price ? 'Сохранённая цена' : 'Рассчитанная цена'}">
+                    ${article.has_custom_min_price ? '<i class="bi bi-bookmark-fill text-success ms-1" title="Сохранённая цена"></i>' : ''}
                 </td>
                 <td class="text-end fw-bold text-info your-price-cell" data-value="${article.calculated_your_price || 0}">
                     ${App.formatPrice(article.calculated_your_price || 0)}
@@ -691,12 +780,40 @@ const OzonCalculator = {
             // Показываем результаты
             this.showUploadResults(data);
 
+            // Сохраняем настройки наценок (чтобы при следующем входе восстановились)
+            await this.saveSettings();
+
+            // Сохраняем кастомные минимальные цены
+            await this.saveCustomMinPrices(articles);
+
             // Перезагружаем артикулы для обновления статусов
             await this.loadArticles(this.selectedProduct.id);
             this.recalculatePrices();
 
         } catch (error) {
             App.showToast('Ошибка загрузки: ' + error.message, 'danger');
+        }
+    },
+
+    /**
+     * Сохранение кастомных минимальных цен для артикулов
+     */
+    async saveCustomMinPrices(articles) {
+        // Сохраняем только те, где минимальная цена была вручную отредактирована
+        for (const article of articles) {
+            if (article.min_price_edited && article.mapping_id) {
+                try {
+                    await App.fetch('/api/mapping/update-min-price', {
+                        method: 'POST',
+                        body: new URLSearchParams({
+                            mapping_id: article.mapping_id,
+                            min_price: article.calculated_min_price
+                        })
+                    });
+                } catch (e) {
+                    console.warn('Не удалось сохранить мин. цену для mapping_id=' + article.mapping_id, e);
+                }
+            }
         }
     },
 

@@ -3,6 +3,47 @@
  * 3-шаговый интерфейс: Загрузка -> Сопоставление -> Просмотр
  */
 
+/**
+ * Копирование текста в буфер обмена с fallback для HTTP
+ * @param {string} text - текст для копирования
+ * @returns {Promise<boolean>} - успех операции
+ */
+function copyToClipboard(text) {
+    return new Promise((resolve) => {
+        // Способ 1: Clipboard API (работает только по HTTPS)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text)
+                .then(() => resolve(true))
+                .catch(() => resolve(fallbackCopy(text)));
+        } else {
+            // Способ 2: Fallback через textarea (работает по HTTP)
+            resolve(fallbackCopy(text));
+        }
+    });
+}
+
+/**
+ * Fallback копирование через временный textarea
+ */
+function fallbackCopy(text) {
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return success;
+    } catch (err) {
+        console.error('Fallback copy failed:', err);
+        return false;
+    }
+}
+
 const YMMapping = {
     // Данные
     ourProducts: [],
@@ -337,8 +378,12 @@ const YMMapping = {
                 e.preventDefault();
                 e.stopPropagation();
                 const text = btn.closest('.product-name-wrapper').querySelector('.product-name-text').textContent;
-                navigator.clipboard.writeText(text).then(() => {
-                    App.showToast('Название скопировано', 'success');
+                copyToClipboard(text).then((success) => {
+                    if (success) {
+                        App.showToast('Название скопировано', 'success');
+                    } else {
+                        App.showToast('Не удалось скопировать', 'danger');
+                    }
                 });
             });
         });
@@ -490,8 +535,12 @@ const YMMapping = {
                 e.preventDefault();
                 e.stopPropagation();
                 const text = btn.closest('.product-name-wrapper').querySelector('.product-name-text').textContent;
-                navigator.clipboard.writeText(text).then(() => {
-                    App.showToast('Название скопировано', 'success');
+                copyToClipboard(text).then((success) => {
+                    if (success) {
+                        App.showToast('Название скопировано', 'success');
+                    } else {
+                        App.showToast('Не удалось скопировать', 'danger');
+                    }
                 });
             });
         });

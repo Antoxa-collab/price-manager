@@ -387,6 +387,22 @@ class Database
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             ",
 
+            'calculator_settings' => "
+                CREATE TABLE IF NOT EXISTS `calculator_settings` (
+                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    `user_id` INT UNSIGNED NOT NULL,
+                    `marketplace` ENUM('ozon', 'wildberries') NOT NULL,
+                    `markup_min` DECIMAL(10,2) DEFAULT 0 COMMENT 'Минимальная наценка',
+                    `markup_extra` DECIMAL(5,2) DEFAULT 0 COMMENT 'Дополнительная наценка (%)',
+                    `discount` DECIMAL(5,2) DEFAULT 0 COMMENT 'Скидка (%)',
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_user_marketplace` (`user_id`, `marketplace`),
+                    KEY `idx_user_id` (`user_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Настройки калькулятора цен'
+            ",
+
             // AI Assistant tables
             'ai_prompts' => "
                 CREATE TABLE IF NOT EXISTS `ai_prompts` (
@@ -547,6 +563,9 @@ class Database
         // Добавляем недостающие колонки в product_mappings
         $this->ensureMappingColumns();
 
+        // Добавляем недостающие колонки в wb_products_cache (barcode для остатков)
+        $this->ensureWbCacheColumns();
+
         // Добавляем недостающие колонки в AI таблицы
         $this->ensureAIColumns();
 
@@ -618,8 +637,26 @@ class Database
 
         // Колонки для добавления
         $columnsToAdd = [
-            'pieces_per_sheet' => "ALTER TABLE product_mappings ADD COLUMN `pieces_per_sheet` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Сколько единиц получается из 1 листа/закупочной единицы' AFTER `quantity_in_pack`"
+            'user_id' => "ALTER TABLE product_mappings ADD COLUMN `user_id` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'ID пользователя' AFTER `id`",
+            'pieces_per_sheet' => "ALTER TABLE product_mappings ADD COLUMN `pieces_per_sheet` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Сколько единиц получается из 1 листа/закупочной единицы' AFTER `quantity_in_pack`",
+            'custom_min_price' => "ALTER TABLE product_mappings ADD COLUMN `custom_min_price` DECIMAL(10,2) DEFAULT NULL COMMENT 'Ручная минимальная цена' AFTER `pieces_per_sheet`",
+            'is_min_price_edited' => "ALTER TABLE product_mappings ADD COLUMN `is_min_price_edited` TINYINT(1) DEFAULT 0 COMMENT 'Флаг ручного редактирования мин. цены' AFTER `custom_min_price`",
+            'custom_discount' => "ALTER TABLE product_mappings ADD COLUMN `custom_discount` DECIMAL(5,2) DEFAULT 90 COMMENT 'Скидка на WB (по умолчанию 90%)' AFTER `is_min_price_edited`",
+            'is_discount_edited' => "ALTER TABLE product_mappings ADD COLUMN `is_discount_edited` TINYINT(1) DEFAULT 0 COMMENT 'Флаг ручного редактирования скидки' AFTER `custom_discount`"
         ];
+
+        // Добавляем индекс для user_id если колонка добавлена
+        if (!in_array('user_id', $columns)) {
+            try {
+                $this->pdo->exec("ALTER TABLE product_mappings ADD COLUMN `user_id` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'ID пользователя' AFTER `id`");
+                $this->pdo->exec("CREATE INDEX idx_pm_user_id ON product_mappings(user_id)");
+                error_log("[Database] Added user_id column and index to product_mappings");
+            } catch (PDOException $e) {
+                error_log("Ошибка добавления колонки user_id: " . $e->getMessage());
+            }
+            // Удаляем из списка, так как уже добавили
+            unset($columnsToAdd['user_id']);
+        }
 
         foreach ($columnsToAdd as $column => $sql) {
             if (!in_array($column, $columns)) {
@@ -630,6 +667,58 @@ class Database
                 }
             }
         }
+    }
+
+    /**
+     * Проверить и добавить недостающие колонки в таблицу wb_products_cache
+     * Добавляет поле barcode для корректной загрузки остатков на WB
+     */
+    private function ensureWbCacheColumns(): void
+    {
+        // Проверяем существование таблицы
+        try {
+            $result = $this->pdo->query("SHOW TABLES LIKE 'wb_products_cache'")->fetch();
+            if (!$result) {
+                return;
+            }
+        } catch (PDOException $e) {
+            return;
+        }
+
+        // Получаем список существующих колонок
+        try {
+            $columns = $this->pdo->query("SHOW COLUMNS FROM wb_products_cache")->fetchAll(PDO::FETCH_COLUMN);
+        } catch (PDOException $e) {
+            return;
+        }
+
+        // Добавляем barcode если его нет
+        if (!in_array('barcode', $columns)) {
+            try {
+                $this->pdo->exec("ALTER TABLE wb_products_cache ADD COLUMN `barcode` VARCHAR(255) NULL AFTER `vendor_code`");
+                error_log("[Database] Добавлена колонка barcode в wb_products_cache");
+
+                // Создаём индекс
+                $this->pdo->exec("CREATE INDEX idx_wb_products_barcode ON wb_products_cache(barcode)");
+                error_log("[Database] Создан индекс idx_wb_products_barcode");
+            } catch (PDOException $e) {
+                error_log("Ошибка добавления колонки barcode: " . $e->getMessage());
+            }
+        }
+
+        // Добавляем is_oversized для фильтрации КГТ-товаров
+        if (!in_array('is_oversized', $columns)) {
+            try {
+                $this->pdo->exec("ALTER TABLE wb_products_cache ADD COLUMN `is_oversized` TINYINT(1) DEFAULT 0 COMMENT 'КГТ-товар (любая сторона > 1200мм)'");
+                error_log("[Database] Добавлена колонка is_oversized в wb_products_cache");
+            } catch (PDOException $e) {
+                error_log("Ошибка добавления колонки is_oversized: " . $e->getMessage());
+            }
+        }
+
+        // НЕ сбрасываем и не обновляем is_oversized автоматически —
+        // флаг устанавливается только при ошибке 409 от WB API (CargoWarehouseRestrictionSGTKGTPlus)
+        // Это гарантирует, что мы не потеряем флаги, установленные из реального ответа API
     }
 
     /**

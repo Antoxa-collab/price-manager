@@ -7,6 +7,25 @@
     <meta name="csrf-token" content="<?= e(generateCsrfToken()) ?>">
     <title><?= e($pageTitle ?? 'Price Manager') ?> - <?= APP_NAME ?></title>
 
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/images/og-image.png">
+    <link rel="apple-touch-icon" href="/images/og-image.png">
+
+    <!-- Open Graph мета-теги для ссылок в соцсетях -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="<?= e($pageTitle ?? 'Распилим') ?> - <?= APP_NAME ?>">
+    <meta property="og:description" content="Система управления ценами для маркетплейсов Wildberries и Ozon">
+    <meta property="og:image" content="<?= 'http://' . ($_SERVER['HTTP_HOST'] ?? '192.168.0.213:8080') ?>/images/og-image.png">
+    <meta property="og:image:width" content="225">
+    <meta property="og:image:height" content="225">
+    <meta property="og:url" content="<?= 'http://' . ($_SERVER['HTTP_HOST'] ?? '192.168.0.213:8080') . ($_SERVER['REQUEST_URI'] ?? '/') ?>">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="<?= e($pageTitle ?? 'Распилим') ?> - <?= APP_NAME ?>">
+    <meta name="twitter:description" content="Система управления ценами для маркетплейсов">
+    <meta name="twitter:image" content="<?= 'http://' . ($_SERVER['HTTP_HOST'] ?? '192.168.0.213:8080') ?>/images/og-image.png">
+
     <!-- Bootstrap 5.3 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
@@ -24,8 +43,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top border-bottom border-secondary">
         <div class="container-fluid">
             <a class="navbar-brand d-flex align-items-center" href="/">
-                <i class="bi bi-calculator me-2"></i>
-                <?= APP_NAME ?>
+                <img src="/images/logo.png" alt="<?= APP_NAME ?>" height="32" class="me-2">
             </a>
 
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">

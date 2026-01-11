@@ -13,6 +13,7 @@ const ProductsPage = {
         this.bindEvents();
         this.initSearch();
         this.initSort();
+        this.initBulkMarkup();
     },
 
     /**
@@ -516,6 +517,87 @@ const ProductsPage = {
                 th.classList.remove('sorted');
             }
         });
+    },
+
+    // ==================== МАССОВОЕ ПРИМЕНЕНИЕ НАЦЕНОК ====================
+
+    /**
+     * Инициализация массового применения наценок
+     */
+    initBulkMarkup() {
+        const applyMinBtn = document.getElementById('applyBulkMarkupMin');
+        const applyExtraBtn = document.getElementById('applyBulkMarkupExtra');
+
+        if (applyMinBtn) {
+            applyMinBtn.addEventListener('click', () => {
+                const value = parseFloat(document.getElementById('bulkMarkupMin').value) || 0;
+                this.applyBulkMarkup('markup_min_price', value);
+            });
+        }
+
+        if (applyExtraBtn) {
+            applyExtraBtn.addEventListener('click', () => {
+                const value = parseFloat(document.getElementById('bulkMarkupExtra').value) || 0;
+                this.applyBulkMarkup('markup_your_price', value);
+            });
+        }
+    },
+
+    /**
+     * Применение наценки ко всем товарам
+     * @param {string} field - Поле для обновления (markup_min_price или markup_your_price)
+     * @param {number} value - Значение наценки
+     */
+    async applyBulkMarkup(field, value) {
+        if (value < 0) {
+            App.showToast('Значение не может быть отрицательным', 'warning');
+            return;
+        }
+
+        const fieldName = field === 'markup_min_price' ? 'Наценка мин.' : 'Доп. наценка';
+        const confirmed = await App.confirm(
+            `Применить "${fieldName} = ${value}%" ко ВСЕМ товарам?`,
+            'Подтверждение'
+        );
+
+        if (!confirmed) return;
+
+        const statusEl = document.getElementById('bulkMarkupStatus');
+        if (statusEl) statusEl.textContent = 'Применяем...';
+
+        try {
+            const data = await App.fetch('/api/products/bulk-markup', {
+                method: 'POST',
+                body: { field: field, value: value }
+            });
+
+            if (data.success) {
+                App.showToast(data.message || 'Наценки применены', 'success');
+                if (statusEl) statusEl.textContent = `Обновлено: ${data.updated}`;
+
+                // Обновляем значения в таблице
+                const inputClass = field === 'markup_min_price' ? '.markup-min-input' : '.markup-your-input';
+                document.querySelectorAll(inputClass).forEach(input => {
+                    input.value = value;
+                });
+
+                // Подсветка всех строк
+                document.querySelectorAll('#productsTable tr[data-id]').forEach(row => {
+                    row.style.transition = 'background-color 0.3s';
+                    row.style.backgroundColor = 'rgba(255, 193, 7, 0.2)';
+                    setTimeout(() => {
+                        row.style.backgroundColor = '';
+                    }, 1000);
+                });
+            } else {
+                App.showToast(data.message || 'Ошибка применения', 'danger');
+                if (statusEl) statusEl.textContent = 'Ошибка';
+            }
+        } catch (error) {
+            console.error('Bulk markup error:', error);
+            App.showToast('Ошибка: ' + error.message, 'danger');
+            if (statusEl) statusEl.textContent = 'Ошибка';
+        }
     }
 };
 

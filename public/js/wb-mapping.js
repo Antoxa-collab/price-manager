@@ -601,6 +601,7 @@ const WBMapping = {
                 <td>
                     <code>${App.escapeHtml(mapping.vendor_code || '')}</code>
                     <br><small class="text-muted">nmID: ${mapping.nm_id || ''}</small>
+                    <br><small class="${mapping.barcode ? 'text-muted' : 'text-danger'}">${mapping.barcode ? `barcode: ${mapping.barcode}` : 'barcode: ❌ нет'}</small>
                 </td>
                 <td class="text-truncate" style="max-width: 250px;" title="${App.escapeHtml(mapping.wb_name || '')}">
                     ${App.escapeHtml(mapping.wb_name || '-')}

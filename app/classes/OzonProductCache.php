@@ -555,6 +555,8 @@ class OzonProductCache
      */
     public function autoFillPiecesPerSheet(int $productId, int $baseWidth = 1520, int $baseHeight = 1520): int
     {
+        error_log("[Ozon autoFillPiecesPerSheet] START: productId=$productId, baseSheet={$baseWidth}x{$baseHeight}");
+
         $updated = 0;
 
         // Получаем все маппинги для этого товара
@@ -571,6 +573,8 @@ class OzonProductCache
             [$productId]
         );
 
+        error_log("[Ozon autoFillPiecesPerSheet] Found " . count($mappings) . " mappings for product $productId");
+
         foreach ($mappings as $mapping) {
             // Собираем артикул (приоритет: из маппинга, потом из кэша)
             $articleText = $mapping['marketplace_offer_id'] ?: $mapping['cache_offer_id'] ?: '';
@@ -580,11 +584,13 @@ class OzonProductCache
 
             // Если нет ни артикула, ни названия — пропускаем
             if (empty($articleText) && empty($nameText)) {
+                error_log("[Ozon autoFillPiecesPerSheet] Skipping mapping_id={$mapping['id']} - no article or name");
                 continue;
             }
 
             // Парсим артикул И название
             $parsed = self::parseArticleName($articleText, $nameText, $baseWidth, $baseHeight);
+            error_log("[Ozon autoFillPiecesPerSheet] Parsed: article='$articleText' => width={$parsed['width']}, height={$parsed['height']}, calculated_pps={$parsed['pieces_per_sheet']}");
 
             // Пытаемся найти в справочнике раскроя
             $piecesPerSheet = $parsed['pieces_per_sheet'];
@@ -592,6 +598,7 @@ class OzonProductCache
 
             if ($parsed['width'] > 0 && $parsed['height'] > 0) {
                 $userId = $mapping['user_id'] ?? 1;
+                error_log("[Ozon autoFillPiecesPerSheet] Calling lookupCuttingReference: userId=$userId, sheet={$baseWidth}x{$baseHeight}, piece={$parsed['width']}x{$parsed['height']}");
                 $referenceLookup = $this->lookupCuttingReference(
                     $userId,
                     $baseWidth,
@@ -600,11 +607,18 @@ class OzonProductCache
                     $parsed['height']
                 );
 
+                error_log("[Ozon autoFillPiecesPerSheet] lookupCuttingReference returned: " . ($referenceLookup !== null ? $referenceLookup : "NULL"));
+
                 // Валидация значения из справочника (защита от некорректных данных)
                 if ($referenceLookup !== null && $referenceLookup > 0 && $referenceLookup <= 10000) {
                     $piecesPerSheet = $referenceLookup;
                     $fromReference = true;
+                    error_log("[Ozon autoFillPiecesPerSheet] Using REFERENCE value: $piecesPerSheet");
+                } else {
+                    error_log("[Ozon autoFillPiecesPerSheet] Using CALCULATED value: $piecesPerSheet");
                 }
+            } else {
+                error_log("[Ozon autoFillPiecesPerSheet] Skipping reference lookup - no valid piece dimensions (width={$parsed['width']}, height={$parsed['height']})");
             }
 
             // Финальная валидация перед записью в БД (защита от MySQL 22003)
@@ -656,38 +670,85 @@ class OzonProductCache
      */
     public function lookupCuttingReference(int $userId, int $sheetWidth, int $sheetHeight, int $pieceWidth, int $pieceHeight): ?int
     {
-        // Ищем лист в справочнике с точным или близким размером
+        error_log("[lookupCuttingReference] START: userId=$userId, sheet={$sheetWidth}x{$sheetHeight}, piece={$pieceWidth}x{$pieceHeight}");
+
+        // ВАЖНО: Ищем ВСЕ листы подходящего размера (не только первый!)
+        // Разные материалы могут иметь одинаковые размеры листа (2500x1250),
+        // но кусочки заданы только в одном из них.
         // Допускаем погрешность в 50мм для размера листа
         // ВАЖНО: Используем CAST AS SIGNED для избежания ошибки MySQL 22003
-        // при вычитании UNSIGNED значений (когда результат отрицательный)
-        $sheet = $this->db->fetchOne(
-            "SELECT id FROM cutting_sheets
+        $sheets = $this->db->fetchAll(
+            "SELECT id, sheet_width, sheet_height, material_name FROM cutting_sheets
              WHERE user_id = ? AND is_active = 1
                AND ABS(CAST(sheet_width AS SIGNED) - CAST(? AS SIGNED)) <= 50
                AND ABS(CAST(sheet_height AS SIGNED) - CAST(? AS SIGNED)) <= 50
-             ORDER BY ABS(CAST(sheet_width AS SIGNED) - CAST(? AS SIGNED)) + ABS(CAST(sheet_height AS SIGNED) - CAST(? AS SIGNED)) ASC
-             LIMIT 1",
+             ORDER BY ABS(CAST(sheet_width AS SIGNED) - CAST(? AS SIGNED)) + ABS(CAST(sheet_height AS SIGNED) - CAST(? AS SIGNED)) ASC",
             [$userId, $sheetWidth, $sheetHeight, $sheetWidth, $sheetHeight]
         );
 
-        if (!$sheet) {
+        if (!$sheets || count($sheets) === 0) {
+            error_log("[lookupCuttingReference] No sheets found for {$sheetWidth}x{$sheetHeight}");
             return null;
         }
 
-        // Ищем размер кусочка в справочнике
-        // Точное совпадение или с учётом поворота на 90°
-        $piece = $this->db->fetchOne(
-            "SELECT actual_qty FROM cutting_pieces
-             WHERE sheet_id = ?
-               AND (
-                   (piece_width = ? AND piece_height = ?)
-                   OR (piece_width = ? AND piece_height = ?)
-               )
-             LIMIT 1",
-            [$sheet['id'], $pieceWidth, $pieceHeight, $pieceHeight, $pieceWidth]
-        );
+        $sheetNames = implode(', ', array_map(fn($s) => "id={$s['id']} {$s['material_name']}", $sheets));
+        error_log("[lookupCuttingReference] Found " . count($sheets) . " sheets: $sheetNames");
 
-        return $piece ? (int)$piece['actual_qty'] : null;
+        // Ищем кусочек во ВСЕХ найденных листах
+        foreach ($sheets as $sheet) {
+            error_log("[lookupCuttingReference] Searching piece {$pieceWidth}x{$pieceHeight} in sheet_id={$sheet['id']} ({$sheet['material_name']})");
+
+            // Ищем размер кусочка в справочнике
+            // С учётом погрешности ±15мм (для компенсации округлений и разницы в замерах)
+            // И с учётом поворота на 90° (WxH или HxW)
+            $piece = $this->db->fetchOne(
+                "SELECT id, piece_name, piece_width, piece_height, actual_qty, calculated_qty
+                 FROM cutting_pieces
+                 WHERE sheet_id = ?
+                   AND (
+                       -- Прямое совпадение с погрешностью ±15мм
+                       (ABS(CAST(piece_width AS SIGNED) - CAST(? AS SIGNED)) <= 15
+                        AND ABS(CAST(piece_height AS SIGNED) - CAST(? AS SIGNED)) <= 15)
+                       OR
+                       -- Поворот на 90° с погрешностью ±15мм
+                       (ABS(CAST(piece_width AS SIGNED) - CAST(? AS SIGNED)) <= 15
+                        AND ABS(CAST(piece_height AS SIGNED) - CAST(? AS SIGNED)) <= 15)
+                   )
+                 ORDER BY
+                   LEAST(
+                       ABS(CAST(piece_width AS SIGNED) - CAST(? AS SIGNED)) + ABS(CAST(piece_height AS SIGNED) - CAST(? AS SIGNED)),
+                       ABS(CAST(piece_width AS SIGNED) - CAST(? AS SIGNED)) + ABS(CAST(piece_height AS SIGNED) - CAST(? AS SIGNED))
+                   ) ASC
+                 LIMIT 1",
+                [
+                    $sheet['id'],
+                    $pieceWidth, $pieceHeight,      // прямое совпадение
+                    $pieceHeight, $pieceWidth,      // поворот 90°
+                    $pieceWidth, $pieceHeight,      // ORDER BY прямое
+                    $pieceHeight, $pieceWidth       // ORDER BY поворот
+                ]
+            );
+
+            if ($piece) {
+                error_log("[lookupCuttingReference] FOUND in sheet_id={$sheet['id']}: piece_id={$piece['id']}, {$piece['piece_name']} {$piece['piece_width']}x{$piece['piece_height']}, actual_qty={$piece['actual_qty']}");
+                return (int)$piece['actual_qty'];
+            }
+
+            // Диагностика: какие кусочки есть в этом листе
+            $allPieces = $this->db->fetchAll(
+                "SELECT piece_name, piece_width, piece_height, actual_qty FROM cutting_pieces WHERE sheet_id = ?",
+                [$sheet['id']]
+            );
+            if ($allPieces) {
+                $piecesStr = implode(', ', array_map(fn($p) => "{$p['piece_width']}x{$p['piece_height']}({$p['actual_qty']})", $allPieces));
+                error_log("[lookupCuttingReference] Pieces in sheet_id={$sheet['id']}: $piecesStr");
+            } else {
+                error_log("[lookupCuttingReference] No pieces in sheet_id={$sheet['id']}");
+            }
+        }
+
+        error_log("[lookupCuttingReference] Piece {$pieceWidth}x{$pieceHeight} NOT FOUND in any of " . count($sheets) . " sheets");
+        return null;
     }
 
     /**

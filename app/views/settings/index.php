@@ -16,6 +16,11 @@ $ozonSettings = $db->fetchOne(
     [$userId]
 );
 
+$ymSettings = $db->fetchOne(
+    "SELECT * FROM api_settings WHERE user_id = ? AND platform = 'yandex_market'",
+    [$userId]
+);
+
 // Получаем настройки Claude
 $claudeKey = $db->fetchOne(
     "SELECT * FROM user_api_keys WHERE user_id = ? AND service = 'claude'",
@@ -177,6 +182,97 @@ $claudeKey = $db->fetchOne(
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Яндекс.Маркет -->
+    <div class="col-lg-6 mb-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-shop me-2"></i>
+                    Яндекс.Маркет
+                </span>
+                <?php if (!empty($ymSettings['api_key']) && !empty($ymSettings['client_id'])): ?>
+                <span class="badge bg-success">Подключено</span>
+                <?php else: ?>
+                <span class="badge bg-danger">Не настроено</span>
+                <?php endif; ?>
+            </div>
+            <div class="card-body">
+                <form id="ymSettingsForm">
+                    <div class="mb-3">
+                        <label for="ymApiKey" class="form-label">
+                            API-Key
+                            <a href="https://partner.market.yandex.ru" target="_blank" class="text-muted small">
+                                <i class="bi bi-question-circle"></i>
+                            </a>
+                        </label>
+                        <textarea class="form-control font-monospace"
+                                  id="ymApiKey"
+                                  name="api_key"
+                                  rows="2"
+                                  placeholder="ACMA:..."><?= e($ymSettings['api_key'] ?? '') ?></textarea>
+                        <div class="form-text">
+                            Токен авторизации из кабинета Яндекс.Маркет
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="ymBusinessId" class="form-label">Business ID (ID кабинета)</label>
+                        <input type="text"
+                               class="form-control"
+                               id="ymBusinessId"
+                               name="business_id"
+                               value="<?= e($ymSettings['client_id'] ?? '') ?>"
+                               placeholder="Например: 12345678">
+                        <div class="form-text">
+                            Идентификатор кабинета из раздела Настройки &rarr; API
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="ymCampaignId" class="form-label">Campaign ID (ID кампании/магазина)</label>
+                        <input type="text"
+                               class="form-control"
+                               id="ymCampaignId"
+                               name="campaign_id"
+                               value="<?= e($ymSettings['shop_id'] ?? '') ?>"
+                               placeholder="Например: 87654321">
+                        <div class="form-text">
+                            Идентификатор кампании (магазина)
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="ymWarehouseId" class="form-label">ID склада</label>
+                        <input type="text"
+                               class="form-control"
+                               id="ymWarehouseId"
+                               name="warehouse_id"
+                               value="<?= e($ymSettings['warehouse_id'] ?? '') ?>"
+                               placeholder="Например: 123456789">
+                        <div class="form-text">
+                            ID вашего склада для обновления остатков (FBY/FBS)
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save me-1"></i> Сохранить
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="testYmBtn">
+                            <i class="bi bi-check-circle me-1"></i> Проверить
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <?php if (!empty($ymSettings['last_sync_at'])): ?>
+            <div class="card-footer border-secondary text-muted small">
+                <i class="bi bi-clock me-1"></i>
+                Последняя синхронизация: <?= formatDate($ymSettings['last_sync_at']) ?>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
 </div>
 
 <!-- Claude AI -->
@@ -262,7 +358,7 @@ $claudeKey = $db->fetchOne(
             </div>
             <div class="card-body">
                 <div class="row">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <h6>Wildberries</h6>
                         <ol class="small">
                             <li>Войдите в <a href="https://seller.wildberries.ru" target="_blank">личный кабинет WB</a></li>
@@ -272,7 +368,7 @@ $claudeKey = $db->fetchOne(
                             <li>Укажите ID склада (можно найти в разделе "Склады")</li>
                         </ol>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <h6>Ozon</h6>
                         <ol class="small">
                             <li>Войдите в <a href="https://seller.ozon.ru" target="_blank">личный кабинет Ozon Seller</a></li>
@@ -280,6 +376,17 @@ $claudeKey = $db->fetchOne(
                             <li>Создайте новый ключ с правами Admin (или Seller API)</li>
                             <li>Скопируйте Client-Id и API-Key</li>
                             <li>Укажите ID склада из раздела "FBO склады"</li>
+                        </ol>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Яндекс.Маркет</h6>
+                        <ol class="small">
+                            <li>Войдите в <a href="https://partner.market.yandex.ru" target="_blank">личный кабинет Яндекс.Маркет</a></li>
+                            <li>Перейдите: Настройки &rarr; API и модули</li>
+                            <li>Создайте новый API-Key токен с правами на управление ценами и остатками</li>
+                            <li>Скопируйте API-Key и вставьте в поле выше</li>
+                            <li>Business ID и Campaign ID найдите в разделе "API и модули"</li>
+                            <li>Укажите ID склада из раздела "Склады"</li>
                         </ol>
                     </div>
                 </div>
@@ -380,6 +487,73 @@ document.addEventListener('DOMContentLoaded', function() {
                 App.showToast('Подключение к Ozon работает!', 'success');
             } else {
                 App.showToast(data.message || 'Ошибка подключения', 'danger');
+            }
+        })
+        .catch(error => {
+            App.hideLoading();
+            App.showToast('Ошибка проверки', 'danger');
+        });
+    });
+
+    // Сохранение настроек Яндекс.Маркет
+    document.getElementById('ymSettingsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const data = {
+            api_key: document.getElementById('ymApiKey').value.trim(),
+            business_id: document.getElementById('ymBusinessId').value.trim(),
+            campaign_id: document.getElementById('ymCampaignId').value.trim(),
+            warehouse_id: document.getElementById('ymWarehouseId').value.trim()
+        };
+
+        App.showLoading('Сохранение настроек...');
+
+        fetch('/api/settings/yandex', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': window.csrfToken
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            App.hideLoading();
+            if (data.success) {
+                App.showToast('Настройки Яндекс.Маркет сохранены', 'success');
+                // Обновляем бейдж
+                const badge = document.querySelector('#ymSettingsForm').closest('.card').querySelector('.badge');
+                if (badge) {
+                    badge.className = 'badge bg-success';
+                    badge.textContent = 'Подключено';
+                }
+            } else {
+                App.showToast(data.message || data.error || 'Ошибка сохранения', 'danger');
+            }
+        })
+        .catch(error => {
+            App.hideLoading();
+            App.showToast('Ошибка соединения', 'danger');
+        });
+    });
+
+    // Проверка Яндекс.Маркет
+    document.getElementById('testYmBtn').addEventListener('click', function() {
+        App.showLoading('Проверка подключения к Яндекс.Маркет...');
+
+        fetch('/api/test/yandex', {
+            method: 'GET',
+            headers: {
+                'X-CSRF-Token': window.csrfToken
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            App.hideLoading();
+            if (data.success) {
+                App.showToast(data.message || 'Подключение к Яндекс.Маркет работает!', 'success');
+            } else {
+                App.showToast(data.message || data.error || 'Ошибка подключения', 'danger');
             }
         })
         .catch(error => {

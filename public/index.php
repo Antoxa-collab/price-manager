@@ -1453,6 +1453,162 @@ try {
             }
             break;
 
+        // ==================== Calculator Settings API ====================
+
+        // Получить/сохранить настройки калькулятора (наценки, скидки)
+        case '/api/calculator/settings':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+            $database = Database::getInstance();
+
+            if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+                // Получить настройки
+                $marketplace = get('marketplace', 'ozon');
+                if (!in_array($marketplace, ['ozon', 'wildberries'])) {
+                    $marketplace = 'ozon';
+                }
+
+                $settings = $database->fetchOne(
+                    "SELECT markup_min, markup_extra, discount FROM calculator_settings
+                     WHERE user_id = ? AND marketplace = ?",
+                    [$userId, $marketplace]
+                );
+
+                jsonResponse([
+                    'success' => true,
+                    'settings' => $settings ?: [
+                        'markup_min' => 0,
+                        'markup_extra' => 0,
+                        'discount' => 0
+                    ]
+                ]);
+            } else {
+                // POST - сохранить настройки
+                $marketplace = post('marketplace', 'ozon');
+                if (!in_array($marketplace, ['ozon', 'wildberries'])) {
+                    jsonResponse(['success' => false, 'message' => 'Неверный маркетплейс']);
+                }
+
+                $markupMin = (float)post('markup_min', 0);
+                $markupExtra = (float)post('markup_extra', 0);
+                $discount = (float)post('discount', 0);
+
+                // Валидация значений
+                $markupMin = max(0, min(1000000, $markupMin));
+                $markupExtra = max(0, min(1000, $markupExtra));
+                $discount = max(0, min(100, $discount));
+
+                $database->execute(
+                    "INSERT INTO calculator_settings (user_id, marketplace, markup_min, markup_extra, discount)
+                     VALUES (?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE
+                        markup_min = VALUES(markup_min),
+                        markup_extra = VALUES(markup_extra),
+                        discount = VALUES(discount),
+                        updated_at = NOW()",
+                    [$userId, $marketplace, $markupMin, $markupExtra, $discount]
+                );
+
+                jsonResponse(['success' => true, 'message' => 'Настройки сохранены']);
+            }
+            break;
+
+        // Сохранить кастомную минимальную цену для артикула
+        case '/api/mapping/update-min-price':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+            $database = Database::getInstance();
+
+            try {
+                $mappingId = (int)post('mapping_id', 0);
+                $minPrice = post('min_price');
+
+                error_log("[update-min-price] mapping_id={$mappingId}, min_price={$minPrice}");
+
+                if (!$mappingId) {
+                    jsonResponse(['success' => false, 'message' => 'Не указан mapping_id']);
+                }
+
+                // Проверяем что маппинг принадлежит пользователю
+                // Примечание: в таблице products поле называется created_by, не user_id
+                $mapping = $database->fetchOne(
+                    "SELECT pm.id FROM product_mappings pm
+                     JOIN products p ON pm.product_id = p.id
+                     WHERE pm.id = ? AND p.created_by = ?",
+                    [$mappingId, $userId]
+                );
+
+                if (!$mapping) {
+                    error_log("[update-min-price] Маппинг не найден: mapping_id={$mappingId}, user_id={$userId}");
+                    jsonResponse(['success' => false, 'message' => 'Маппинг не найден']);
+                }
+
+                // null или пустая строка = сброс кастомной цены
+                if ($minPrice === null || $minPrice === '') {
+                    $database->execute(
+                        "UPDATE product_mappings SET custom_min_price = NULL, is_min_price_edited = 0 WHERE id = ?",
+                        [$mappingId]
+                    );
+                    error_log("[update-min-price] Сброс цены для mapping_id={$mappingId}");
+                } else {
+                    $minPriceValue = (float)$minPrice;
+                    $minPriceValue = max(0, min(10000000, $minPriceValue)); // 0 - 10 млн
+
+                    $database->execute(
+                        "UPDATE product_mappings SET custom_min_price = ?, is_min_price_edited = 1 WHERE id = ?",
+                        [$minPriceValue, $mappingId]
+                    );
+                    error_log("[update-min-price] Установлена цена {$minPriceValue} для mapping_id={$mappingId}");
+                }
+
+                jsonResponse(['success' => true]);
+            } catch (PDOException $e) {
+                error_log("[update-min-price] DB ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()], 500);
+            } catch (Exception $e) {
+                error_log("[update-min-price] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Получить кастомные минимальные цены для товара
+        case '/api/mapping/min-prices':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+            $database = Database::getInstance();
+
+            $productId = (int)get('product_id', 0);
+            $marketplace = get('marketplace', 'ozon');
+
+            if (!$productId) {
+                jsonResponse(['success' => false, 'message' => 'Не указан product_id']);
+            }
+
+            try {
+                // Получаем кастомные цены для маппингов товара
+                $prices = $database->fetchAll(
+                    "SELECT pm.id as mapping_id, pm.custom_min_price, pm.is_min_price_edited,
+                            pm.custom_discount, pm.is_discount_edited
+                     FROM product_mappings pm
+                     JOIN products p ON pm.product_id = p.id
+                     WHERE pm.product_id = ? AND LOWER(pm.marketplace) = LOWER(?) AND p.created_by = ?",
+                    [$productId, $marketplace, $userId]
+                );
+
+                $result = [];
+                foreach ($prices as $row) {
+                    if ($row['is_min_price_edited'] && $row['custom_min_price'] !== null) {
+                        $result[$row['mapping_id']] = (float)$row['custom_min_price'];
+                    }
+                }
+
+                jsonResponse(['success' => true, 'prices' => $result]);
+            } catch (Exception $e) {
+                error_log("API min-prices error: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()], 500);
+            }
+            break;
+
         // ==================== Products API ====================
 
         // Получение списка всех товаров
@@ -1511,6 +1667,53 @@ try {
             );
 
             jsonResponse(['success' => true, 'message' => 'Товар сохранён']);
+            break;
+
+        // Массовое применение наценок ко всем товарам
+        case '/api/products/bulk-markup':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $field = post('field', ''); // markup_min_price или markup_your_price
+            $value = (float)post('value', 0);
+
+            if (!in_array($field, ['markup_min_price', 'markup_your_price'])) {
+                jsonResponse(['success' => false, 'message' => 'Неверное поле для обновления']);
+            }
+
+            if ($value < 0 || $value > 100000) {
+                jsonResponse(['success' => false, 'message' => 'Значение должно быть от 0 до 100000']);
+            }
+
+            $db = Database::getInstance();
+
+            try {
+                // Обновляем все активные товары пользователя
+                $db->execute(
+                    "UPDATE products SET {$field} = ?, updated_at = NOW() WHERE created_by = ? AND is_active = 1",
+                    [$value, $userId]
+                );
+
+                // Получаем количество обновлённых товаров отдельным запросом
+                $count = $db->fetchOne(
+                    "SELECT COUNT(*) as cnt FROM products WHERE created_by = ? AND is_active = 1",
+                    [$userId]
+                );
+                $updatedCount = (int)($count['cnt'] ?? 0);
+
+                jsonResponse([
+                    'success' => true,
+                    'message' => "Обновлено товаров: {$updatedCount}",
+                    'updated' => $updatedCount
+                ]);
+            } catch (Exception $e) {
+                error_log("[bulk-markup] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка базы данных'], 500);
+            }
             break;
 
         // Создание нового товара
@@ -1710,6 +1913,11 @@ try {
                 $line = trim($line);
                 if (empty($line) || mb_strlen($line) < 20) continue;
 
+                // Логируем все строки содержащие МДФ (до фильтрации)
+                if (mb_stripos($line, 'мдф') !== false || mb_stripos($line, 'mdf') !== false) {
+                    error_log("[PDF Parse] RAW line с МДФ: '$line'");
+                }
+
                 // Проверяем стоп-слова
                 $lineLower = mb_strtolower($line);
                 $isStopLine = false;
@@ -1729,6 +1937,12 @@ try {
                     // Убираем пробелы из цены и заменяем запятую на точку
                     $priceStr = str_replace([' ', ','], ['', '.'], $matches[5]);
                     $price = (float)$priceStr;
+
+                    // Логируем для отладки (особенно МДФ)
+                    if (mb_stripos($name, 'мдф') !== false || mb_stripos($name, 'mdf') !== false) {
+                        error_log("[PDF Parse] МДФ найден: line='$line'");
+                        error_log("[PDF Parse] МДФ parsed: code='$code', name='$name', qty=$qty, priceStr='$priceStr', price=$price");
+                    }
 
                     // Пропускаем если цена слишком маленькая или код слишком короткий
                     if ($price < 1 || strlen($code) < 6) continue;
@@ -1897,6 +2111,11 @@ try {
                         continue;
                     }
 
+                    // Логируем для отладки МДФ
+                    if (mb_stripos($supplierName, 'мдф') !== false || mb_stripos($supplierName, 'mdf') !== false) {
+                        error_log("[apply-pdf-prices] МДФ update: productId=$productId, price=$price, supplierName='$supplierName'");
+                    }
+
                     // Обновляем закупочную цену товара
                     $affectedRows = $db->execute(
                         "UPDATE products SET cost_price = ?, updated_at = NOW() WHERE id = ? AND created_by = ?",
@@ -1905,6 +2124,10 @@ try {
 
                     if ($affectedRows > 0) {
                         $updated++;
+                        // Логируем успешное обновление МДФ
+                        if (mb_stripos($supplierName, 'мдф') !== false || mb_stripos($supplierName, 'mdf') !== false) {
+                            error_log("[apply-pdf-prices] МДФ SUCCESS: productId=$productId updated with price=$price");
+                        }
                     }
 
                     // Сохраняем сопоставление (если нужно)
@@ -3236,11 +3459,15 @@ try {
         // Получить склады WB
         case '/api/wb/warehouses':
             $auth->requireLogin();
+            error_log("[/api/wb/warehouses] Запрос складов для user_id=" . $auth->getUserId());
             try {
                 $wbApi = new WildberriesAPI($auth->getUserId());
-                jsonResponse($wbApi->getWarehouses());
+                $result = $wbApi->getWarehouses();
+                error_log("[/api/wb/warehouses] Результат: " . json_encode($result, JSON_UNESCAPED_UNICODE));
+                jsonResponse($result);
             } catch (Exception $e) {
-                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+                error_log("[/api/wb/warehouses] ОШИБКА: " . $e->getMessage());
+                jsonResponse(['success' => false, 'error' => $e->getMessage(), 'warehouses' => []], 500);
             }
             break;
 
@@ -3320,17 +3547,46 @@ try {
                     $nmId = (int)$m['marketplace_product_id'];
                     $wbProduct = $cache->getByNmId($nmId);
 
+                    $vendorCode = $wbProduct['vendor_code'] ?? $m['marketplace_offer_id'] ?? '';
+                    $wbName = $wbProduct['title'] ?? $m['marketplace_name'] ?? '';
+
+                    // Получаем pieces_per_sheet из БД
+                    $piecesPerSheet = (int)($m['pieces_per_sheet'] ?? 1);
+                    $quantityInPack = (int)($m['quantity_in_pack'] ?? 1);
+
+                    // Если pieces_per_sheet = 1 (по умолчанию) — пробуем рассчитать динамически
+                    // Парсим артикул и название для определения размеров
+                    if ($piecesPerSheet === 1) {
+                        $parsed = WBProductCache::parseArticleName($vendorCode, $wbName, 1520, 1520);
+                        if ($parsed['pieces_per_sheet'] > 1) {
+                            $piecesPerSheet = $parsed['pieces_per_sheet'];
+                        }
+                        // Также обновляем quantity_in_pack если он по умолчанию
+                        if ($quantityInPack === 1 && $parsed['quantity'] > 1) {
+                            $quantityInPack = $parsed['quantity'];
+                        }
+                    }
+
+                    // Рассчитываем is_oversized ДИНАМИЧЕСКИ на основе размеров из артикула
+                    // Не берём из БД, т.к. там может быть устаревший флаг от ошибок API
+                    $dimensions = WBProductCache::parseDimensions($vendorCode, $wbName);
+                    $isOversized = $dimensions['is_oversized'];
+
                     $articles[] = [
-                        'mapping_id' => $m['id'],
+                        'mapping_id' => $m['mapping_id'],  // ВАЖНО: в SQL возвращается pm.id AS mapping_id
                         'nm_id' => $nmId,
-                        'vendor_code' => $wbProduct['vendor_code'] ?? $m['marketplace_offer_id'] ?? '',
-                        'wb_name' => $wbProduct['title'] ?? $m['marketplace_name'] ?? '',
+                        'vendor_code' => $vendorCode,
+                        'barcode' => $wbProduct['barcode'] ?? null,  // Баркод для загрузки остатков
+                        'wb_name' => $wbName,
                         'wb_price' => $wbProduct['price'] ?? 0,
                         'wb_discount' => $wbProduct['discount'] ?? 0,
-                        'pieces_per_sheet' => $m['pieces_per_sheet'] ?? 1,
-                        'quantity_in_pack' => $m['quantity_in_pack'] ?? 1,
+                        'pieces_per_sheet' => $piecesPerSheet,
+                        'quantity_in_pack' => $quantityInPack,
                         'cost_price' => $m['cost_price'] ?? 0,
-                        'stock' => 0
+                        'stock' => 0,
+                        'custom_discount' => $m['custom_discount'] ?? null,
+                        'is_discount_edited' => (bool)($m['is_discount_edited'] ?? false),
+                        'is_oversized' => $isOversized  // КГТ рассчитывается по размерам из артикула
                     ];
                 }
 
@@ -3462,10 +3718,100 @@ try {
                         $mappings = $cache->getAllMappings();
                     }
 
+                    // Добавляем флаг КГТ на основе размеров из артикула (с fallback на название товара)
+                    foreach ($mappings as &$mapping) {
+                        $vendorCode = $mapping['vendor_code'] ?? '';
+                        $wbName = $mapping['wb_name'] ?? '';  // Название товара для fallback
+                        $dimensions = WBProductCache::parseDimensions($vendorCode, $wbName);
+                        $mapping['is_oversized'] = $dimensions['is_oversized'];
+                        $mapping['dimensions'] = $dimensions;
+                    }
+                    unset($mapping);
+
                     jsonResponse(['success' => true, 'mappings' => $mappings]);
                 } catch (Exception $e) {
                     jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
                 }
+            }
+            break;
+
+        // Сохранение скидки для одного артикула WB
+        case '/api/wb/mapping/update-discount':
+            $auth->requireLogin();
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'error' => 'Метод не разрешён'], 405);
+            }
+
+            $mappingId = (int)post('mapping_id', 0);
+            $discount = (float)post('discount', 0);
+
+            if ($mappingId <= 0) {
+                jsonResponse(['success' => false, 'error' => 'Неверный ID маппинга']);
+            }
+
+            if ($discount < 0 || $discount > 100) {
+                jsonResponse(['success' => false, 'error' => 'Скидка должна быть от 0 до 100%']);
+            }
+
+            try {
+                $db = Database::getInstance();
+                $db->execute(
+                    "UPDATE product_mappings
+                     SET custom_discount = ?, is_discount_edited = 1, updated_at = NOW()
+                     WHERE id = ? AND marketplace = 'wildberries'",
+                    [$discount, $mappingId]
+                );
+                jsonResponse(['success' => true]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Массовое применение скидки ко всем артикулам товара WB
+        case '/api/wb/bulk-discount':
+            $auth->requireLogin();
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'error' => 'Метод не разрешён'], 405);
+            }
+
+            $productId = (int)post('product_id', 0);
+            $discount = (float)post('discount', 0);
+
+            if ($productId <= 0) {
+                jsonResponse(['success' => false, 'error' => 'Неверный ID товара']);
+            }
+
+            if ($discount < 0 || $discount > 100) {
+                jsonResponse(['success' => false, 'error' => 'Скидка должна быть от 0 до 100%']);
+            }
+
+            try {
+                $db = Database::getInstance();
+
+                // Обновить все маппинги этого товара для WB
+                $db->execute(
+                    "UPDATE product_mappings
+                     SET custom_discount = ?, is_discount_edited = 1, updated_at = NOW()
+                     WHERE product_id = ? AND marketplace = 'wildberries' AND is_active = 1",
+                    [$discount, $productId]
+                );
+
+                // Получить количество обновлённых
+                $count = $db->fetchOne(
+                    "SELECT COUNT(*) as cnt FROM product_mappings
+                     WHERE product_id = ? AND marketplace = 'wildberries' AND is_active = 1",
+                    [$productId]
+                );
+
+                $updatedCount = (int)($count['cnt'] ?? 0);
+
+                jsonResponse([
+                    'success' => true,
+                    'updated' => $updatedCount,
+                    'message' => "Скидка {$discount}% применена к {$updatedCount} артикулам"
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
 
@@ -3481,6 +3827,73 @@ try {
                 $cache = new WBProductCache($auth->getUserId());
                 $parsed = $cache->parseArticle($vendorCode);
                 jsonResponse(['success' => true, 'data' => $parsed]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Автозаполнение pieces_per_sheet для маппингов WB
+        case '/api/wb/auto-fill-pieces':
+            $auth->requireLogin();
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'error' => 'Метод не разрешён'], 405);
+            }
+
+            $productId = (int)post('product_id', 0);
+            $baseWidth = (int)post('base_width', 1520);
+            $baseHeight = (int)post('base_height', 1520);
+
+            // Валидация
+            if ($productId <= 0) {
+                jsonResponse(['success' => false, 'error' => 'Не указан товар']);
+            }
+            if ($baseWidth < 100 || $baseWidth > 10000 || $baseHeight < 100 || $baseHeight > 10000) {
+                jsonResponse(['success' => false, 'error' => 'Некорректные размеры листа']);
+            }
+
+            try {
+                $cache = new WBProductCache($auth->getUserId());
+                $updated = $cache->autoFillPiecesPerSheet($productId, $baseWidth, $baseHeight);
+                jsonResponse([
+                    'success' => true,
+                    'updated' => $updated,
+                    'message' => "Обновлено артикулов: {$updated}"
+                ]);
+            } catch (PDOException $e) {
+                error_log("[/api/wb/auto-fill-pieces] PDOException: " . $e->getMessage());
+                jsonResponse(['success' => false, 'error' => 'Ошибка базы данных: ' . $e->getMessage()], 500);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Получить товары в карантине WB
+        case '/api/wb/quarantine':
+            $auth->requireLogin();
+            try {
+                $wbApi = new WildberriesAPI($auth->getUserId());
+                $result = $wbApi->getQuarantineGoods();
+                jsonResponse($result);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Проверить конкретные nmID на карантин
+        case '/api/wb/check-quarantine':
+            $auth->requireLogin();
+            $input = json_decode(file_get_contents('php://input'), true);
+            $nmIds = $input['nm_ids'] ?? [];
+
+            if (empty($nmIds)) {
+                jsonResponse(['success' => false, 'error' => 'Не указаны nmID'], 400);
+                break;
+            }
+
+            try {
+                $wbApi = new WildberriesAPI($auth->getUserId());
+                $result = $wbApi->checkQuarantine($nmIds);
+                jsonResponse(['success' => true] + $result);
             } catch (Exception $e) {
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
@@ -3507,22 +3920,142 @@ try {
             break;
 
         // Загрузить остатки на WB
+        // ИСПРАВЛЕНО: Автоматический поиск баркода по nm_id или vendor_code
         case '/api/wb/upload-stocks':
             $auth->requireLogin();
             $input = json_decode(file_get_contents('php://input'), true);
             $warehouseId = (int)($input['warehouse_id'] ?? 0);
             $stocks = $input['stocks'] ?? [];
 
-            if (!$warehouseId || empty($stocks)) {
-                jsonResponse(['success' => false, 'error' => 'Укажите склад и остатки'], 400);
+            error_log("[upload-stocks] Получен запрос: warehouse_id=$warehouseId, stocks=" . count($stocks));
+
+            if (!$warehouseId) {
+                jsonResponse(['success' => false, 'error' => 'Не указан склад'], 400);
+                break;
+            }
+
+            if (empty($stocks)) {
+                jsonResponse(['success' => false, 'error' => 'Не указаны остатки'], 400);
                 break;
             }
 
             try {
                 $wbApi = new WildberriesAPI($auth->getUserId());
-                $result = $wbApi->updateStocksV3($warehouseId, $stocks);
+                $userId = $auth->getUserId();
+                $database = Database::getInstance();
+
+                // Собираем валидные остатки с баркодами
+                $validStocks = [];
+                $errors = [];
+
+                foreach ($stocks as $stock) {
+                    $sku = $stock['sku'] ?? '';
+                    $nmId = $stock['nm_id'] ?? null;
+                    $amount = (int)($stock['amount'] ?? 0);
+
+                    error_log("[upload-stocks] Обрабатываем: sku='$sku', nm_id='$nmId', amount=$amount");
+
+                    // Если sku уже похож на баркод (8-14 цифр) — используем напрямую
+                    if (preg_match('/^\d{8,14}$/', $sku)) {
+                        error_log("[upload-stocks] SKU '$sku' похож на баркод, используем напрямую");
+                        $validStocks[] = ['sku' => $sku, 'amount' => $amount];
+                        continue;
+                    }
+
+                    // Иначе ищем баркод в кэше по nm_id или vendor_code
+                    $barcode = null;
+
+                    // Сначала пробуем найти по nm_id
+                    // ВАЖНО: исключаем КГТ-товары (is_oversized = 1) — они не принимаются складом
+                    if ($nmId) {
+                        $row = $database->fetchOne(
+                            "SELECT barcode, vendor_code FROM wb_products_cache
+                             WHERE nm_id = ? AND user_id = ? AND barcode IS NOT NULL AND barcode != ''
+                             LIMIT 1",
+                            [$nmId, $userId]
+                        );
+                        if ($row) {
+                            if ($row['barcode']) {
+                                $barcode = $row['barcode'];
+                                error_log("[upload-stocks] Найден barcode по nm_id=$nmId: $barcode");
+                            }
+                        }
+                    }
+
+                    // Если не нашли по nm_id, пробуем по vendor_code (sku)
+                    if (!$barcode && $sku) {
+                        $row = $database->fetchOne(
+                            "SELECT barcode FROM wb_products_cache
+                             WHERE vendor_code = ? AND user_id = ? AND barcode IS NOT NULL AND barcode != ''
+                             LIMIT 1",
+                            [$sku, $userId]
+                        );
+                        if ($row && $row['barcode']) {
+                            $barcode = $row['barcode'];
+                            error_log("[upload-stocks] Найден barcode по vendor_code=$sku: $barcode");
+                        }
+                    }
+
+                    // Если баркод найден — добавляем в валидные
+                    if ($barcode) {
+                        $validStocks[] = ['sku' => $barcode, 'amount' => $amount];
+                    } else {
+                        error_log("[upload-stocks] Barcode не найден для sku='$sku', nm_id='$nmId'. Требуется синхронизация с WB.");
+                        $errors[] = "Нет баркода: $sku (nmID: $nmId) — обновите товары WB";
+                    }
+                }
+
+                error_log("[upload-stocks] Валидных позиций: " . count($validStocks) . ", ошибок: " . count($errors));
+
+                if (empty($validStocks)) {
+                    jsonResponse([
+                        'success' => false,
+                        'error' => 'Не найдены баркоды для указанных артикулов. Выполните синхронизацию товаров с WB.',
+                        'details' => $errors
+                    ], 400);
+                    break;
+                }
+
+                // Отправляем остатки в WB API
+                $result = $wbApi->updateStocksV3($warehouseId, $validStocks);
+
+                error_log("[upload-stocks] Результат WB API: " . json_encode($result));
+
+                // Если API вернул КГТ-товары, помечаем их в базе (не критично для основной операции)
+                if (!empty($result['oversized_skus']) && is_array($result['oversized_skus'])) {
+                    try {
+                        $oversizedSkus = array_values($result['oversized_skus']);
+                        if (count($oversizedSkus) > 0) {
+                            error_log("[upload-stocks] Помечаем КГТ-товары: " . implode(', ', array_slice($oversizedSkus, 0, 5)));
+
+                            // Проверяем существование колонки is_oversized (безопасно игнорируем ошибку)
+                            $placeholders = implode(',', array_fill(0, count($oversizedSkus), '?'));
+                            $params = $oversizedSkus;
+                            $params[] = $userId;
+
+                            $markedCount = $database->execute(
+                                "UPDATE wb_products_cache SET is_oversized = 1 WHERE barcode IN ($placeholders) AND user_id = ?",
+                                $params
+                            );
+
+                            error_log("[upload-stocks] Помечено как КГТ: $markedCount товаров");
+                            $result['marked_as_oversized'] = $markedCount;
+                        }
+                    } catch (Exception $e) {
+                        // Не критичная ошибка — продолжаем работу
+                        error_log("[upload-stocks] Ошибка пометки КГТ (не критично): " . $e->getMessage());
+                    }
+                }
+
+                // Добавляем информацию об ошибках
+                if (!empty($errors)) {
+                    $result['warnings'] = $errors;
+                }
+                $result['processed'] = count($validStocks);
+
                 jsonResponse($result);
             } catch (Exception $e) {
+                error_log("[upload-stocks] ОШИБКА: " . $e->getMessage());
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
@@ -3925,6 +4458,611 @@ try {
                     'product' => $product,
                     'ai_context' => $context
                 ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // ============================================================
+        // ЯНДЕКС.МАРКЕТ API ENDPOINTS
+        // ============================================================
+
+        // Страница Яндекс.Маркет Калькулятор
+        case '/yandex':
+        case '/yandex/calculator':
+            $auth->requireLogin();
+            view('yandex/index', ['auth' => $auth]);
+            break;
+
+        // Страница Яндекс.Маркет Сопоставления
+        case '/yandex/mapping':
+            $auth->requireLogin();
+            view('yandex/mapping', ['auth' => $auth]);
+            break;
+
+        // Получение настроек API ЯМ
+        case '/api/settings/yandex':
+            $auth->requireLogin();
+
+            if (isMethod('GET')) {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+                jsonResponse(['success' => true, 'settings' => $ymApi->getSettings()]);
+            }
+
+            if (isMethod('POST')) {
+                $input = json_decode(file_get_contents('php://input'), true);
+
+                $apiKey = $input['api_key'] ?? post('api_key', '');
+                $businessId = $input['business_id'] ?? post('business_id', '');
+                $campaignId = $input['campaign_id'] ?? post('campaign_id', '');
+                $warehouseId = $input['warehouse_id'] ?? post('warehouse_id', '');
+
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+                $ymApi->saveSettings($apiKey, $businessId, $campaignId, $warehouseId);
+
+                jsonResponse(['success' => true, 'message' => 'Настройки сохранены']);
+            }
+            break;
+
+        // Тест подключения ЯМ
+        case '/api/test/yandex':
+            $auth->requireLogin();
+
+            $ymApi = new YandexMarketAPI($auth->getUserId());
+
+            if (!$ymApi->isConfigured()) {
+                jsonResponse(['success' => false, 'message' => 'API не настроен']);
+            }
+
+            $result = $ymApi->testConnection();
+            jsonResponse($result);
+            break;
+
+        // Список складов ЯМ
+        case '/api/yandex/warehouses':
+            $auth->requireLogin();
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API Яндекс.Маркет не настроен']);
+                }
+
+                $result = $ymApi->getWarehouses();
+                jsonResponse($result);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Список кампаний (магазинов) ЯМ
+        case '/api/yandex/campaigns':
+            $auth->requireLogin();
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API не настроен']);
+                }
+
+                $result = $ymApi->getCampaigns();
+                jsonResponse(['success' => true, 'campaigns' => $result['campaigns'] ?? []]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Debug endpoint для диагностики API Яндекс.Маркет
+        case '/api/yandex/debug':
+            $auth->requireLogin();
+
+            try {
+                $api = new YandexMarketAPI($auth->getUserId());
+
+                $debug = [
+                    'configured' => $api->isConfigured(),
+                    'business_id' => $api->getBusinessId(),
+                    'campaign_id' => $api->getCampaignId(),
+                    'warehouse_id' => $api->getWarehouseId()
+                ];
+
+                // Тест подключения
+                $debug['test_connection'] = $api->testConnection();
+
+                // Тест разных endpoints
+                $debug['endpoints_test'] = $api->debugGetOffers();
+
+                // Проверяем таблицу ym_products_cache
+                $db = Database::getInstance();
+                $tableCheck = $db->fetchOne(
+                    "SELECT COUNT(*) as cnt FROM information_schema.tables
+                     WHERE table_schema = DATABASE() AND table_name = 'ym_products_cache'"
+                );
+                $debug['ym_products_cache_exists'] = (int)$tableCheck['cnt'] > 0;
+
+                if ($debug['ym_products_cache_exists']) {
+                    $cacheCount = $db->fetchOne("SELECT COUNT(*) as cnt FROM ym_products_cache");
+                    $debug['ym_products_cache_count'] = (int)$cacheCount['cnt'];
+                }
+
+                jsonResponse(['success' => true, 'debug' => $debug]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Исправление Campaign ID из testConnection
+        case '/api/yandex/fix-campaign-id':
+            $auth->requireLogin();
+
+            try {
+                $api = new YandexMarketAPI($auth->getUserId());
+                $testResult = $api->testConnection();
+
+                if (!$testResult['success']) {
+                    jsonResponse(['success' => false, 'error' => 'Не удалось получить список кампаний: ' . ($testResult['error'] ?? 'unknown')]);
+                }
+
+                $campaigns = $testResult['campaigns'] ?? [];
+                if (empty($campaigns)) {
+                    jsonResponse(['success' => false, 'error' => 'Нет доступных кампаний']);
+                }
+
+                // Берём первую кампанию
+                $correctCampaignId = (string)$campaigns[0]['id'];
+                $currentCampaignId = $api->getCampaignId();
+
+                if ($correctCampaignId === $currentCampaignId) {
+                    jsonResponse([
+                        'success' => true,
+                        'message' => 'Campaign ID уже правильный',
+                        'campaign_id' => $currentCampaignId
+                    ]);
+                }
+
+                // Обновляем Campaign ID
+                $db = Database::getInstance();
+                $db->execute(
+                    "UPDATE api_settings SET shop_id = ? WHERE platform = 'yandex_market' AND user_id = ?",
+                    [$correctCampaignId, $auth->getUserId()]
+                );
+
+                jsonResponse([
+                    'success' => true,
+                    'message' => "Campaign ID исправлен: {$currentCampaignId} → {$correctCampaignId}",
+                    'old_campaign_id' => $currentCampaignId,
+                    'new_campaign_id' => $correctCampaignId,
+                    'available_campaigns' => array_map(fn($c) => [
+                        'id' => $c['id'],
+                        'domain' => $c['domain'] ?? null
+                    ], $campaigns)
+                ]);
+
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Тест пагинации ЯМ API
+        case '/api/yandex/test-pagination':
+            $auth->requireLogin();
+
+            try {
+                $api = new YandexMarketAPI($auth->getUserId());
+
+                $debug = [
+                    'pages' => [],
+                    'total_loaded' => 0
+                ];
+
+                // Загрузим первые 3 страницы для диагностики
+                $pageToken = null;
+                for ($page = 1; $page <= 3; $page++) {
+                    $result = $api->getOfferMappings($pageToken, 200);
+
+                    if (!$result['success']) {
+                        $debug['pages'][$page] = ['error' => $result['error'] ?? 'unknown'];
+                        break;
+                    }
+
+                    $data = $result['data'];
+                    $offerMappings = $data['result']['offerMappings'] ?? [];
+                    $paging = $data['result']['paging'] ?? null;
+
+                    $debug['pages'][$page] = [
+                        'offers_count' => count($offerMappings),
+                        'paging' => $paging,
+                        'has_next' => isset($paging['nextPageToken'])
+                    ];
+
+                    $debug['total_loaded'] += count($offerMappings);
+
+                    // Проверяем есть ли следующая страница
+                    if (!isset($paging['nextPageToken'])) {
+                        $debug['pagination_stopped'] = "no nextPageToken on page {$page}";
+                        break;
+                    }
+
+                    $pageToken = $paging['nextPageToken'];
+                }
+
+                jsonResponse(['success' => true, 'debug' => $debug]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Синхронизация товаров с ЯМ
+        case '/api/yandex/sync-products':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            set_time_limit(300); // 5 минут
+
+            try {
+                $cache = new YMProductCache($auth->getUserId());
+                $result = $cache->syncAllProducts();
+                jsonResponse($result);
+            } catch (Exception $e) {
+                ErrorLogger::error('YM sync failed', ['error' => $e->getMessage()]);
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Получение товаров ЯМ из кэша
+        case '/api/yandex/products':
+            error_log("[YM products] === ENDPOINT HIT ===");
+            $auth->requireLogin();
+            error_log("[YM products] Auth passed, user_id=" . $auth->getUserId());
+
+            try {
+                error_log("[YM products] Request: limit=" . get('limit', '0') . ", offset=" . get('offset', '0'));
+
+                $cache = new YMProductCache($auth->getUserId());
+                error_log("[YM products] YMProductCache created for user_id=" . $auth->getUserId());
+
+                // limit=0 означает без лимита (загрузить все товары)
+                $limit = (int)get('limit', 0);
+                $offset = (int)get('offset', 0);
+                $search = get('search', '');
+
+                error_log("[YM products] Calling getCachedProducts(search=" . ($search ?: 'null') . ", limit={$limit}, offset={$offset})");
+
+                $products = $cache->getCachedProducts($search ?: null, $limit, $offset);
+                error_log("[YM products] Got " . count($products) . " products");
+
+                $stats = $cache->getStats();
+                error_log("[YM products] Stats: " . json_encode($stats));
+
+                jsonResponse([
+                    'success' => true,
+                    'products' => $products,
+                    'total' => count($products),
+                    'stats' => $stats
+                ]);
+            } catch (Exception $e) {
+                error_log("[YM products] ERROR: " . $e->getMessage());
+                error_log("[YM products] Stack: " . $e->getTraceAsString());
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Получение товаров с сопоставлениями для калькулятора
+        case '/api/yandex/products-with-mappings':
+            $auth->requireLogin();
+
+            try {
+                error_log("[YM] products-with-mappings: creating cache for user " . $auth->getUserId());
+                $cache = new YMProductCache($auth->getUserId());
+                error_log("[YM] products-with-mappings: calling getMappedProducts()");
+                $products = $cache->getMappedProducts();
+                error_log("[YM] products-with-mappings: got " . count($products) . " products");
+
+                jsonResponse(['success' => true, 'products' => $products]);
+            } catch (Exception $e) {
+                error_log("[YM] products-with-mappings ERROR: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Получение артикулов по товару
+        case '/api/yandex/product-articles':
+            $auth->requireLogin();
+
+            $productId = (int)get('product_id', 0);
+
+            if ($productId <= 0) {
+                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+            }
+
+            try {
+                $cache = new YMProductCache($auth->getUserId());
+                $articles = $cache->getProductArticles($productId);
+
+                jsonResponse(['success' => true, 'articles' => $articles]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Все сопоставления ЯМ
+        case '/api/yandex/mapping':
+            $auth->requireLogin();
+            $cache = new YMProductCache($auth->getUserId());
+
+            if (isMethod('GET')) {
+                try {
+                    $mappings = $cache->getAllMappings();
+                    jsonResponse(['success' => true, 'mappings' => $mappings]);
+                } catch (Exception $e) {
+                    jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+                }
+            }
+
+            if (isMethod('POST')) {
+                $input = json_decode(file_get_contents('php://input'), true);
+                $action = $input['action'] ?? post('action', 'create');
+
+                if ($action === 'create') {
+                    $productId = (int)($input['product_id'] ?? post('product_id', 0));
+                    $offerId = $input['offer_id'] ?? post('offer_id', '');
+
+                    if (!$productId || !$offerId) {
+                        jsonResponse(['success' => false, 'message' => 'Укажите product_id и offer_id']);
+                    }
+
+                    $result = $cache->createMapping($productId, $offerId, $input);
+                    jsonResponse($result);
+                }
+
+                if ($action === 'update_pack') {
+                    $mappingId = (int)($input['mapping_id'] ?? post('mapping_id', 0));
+                    $quantityInPack = (int)($input['quantity_in_pack'] ?? post('quantity_in_pack', 1));
+                    $piecesPerSheet = (int)($input['pieces_per_sheet'] ?? post('pieces_per_sheet', 1));
+
+                    $result = $cache->updateMappingPack($mappingId, $quantityInPack, $piecesPerSheet);
+                    jsonResponse($result);
+                }
+            }
+
+            if (isMethod('DELETE')) {
+                $input = json_decode(file_get_contents('php://input'), true);
+                $mappingId = (int)($input['mapping_id'] ?? get('mapping_id', 0));
+
+                if (!$mappingId) {
+                    jsonResponse(['success' => false, 'message' => 'Укажите mapping_id']);
+                }
+
+                $result = $cache->deleteMapping($mappingId);
+                jsonResponse($result);
+            }
+            break;
+
+        // Обновление скидки для артикула
+        case '/api/yandex/mapping/update-discount':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            $mappingId = (int)($input['mapping_id'] ?? 0);
+            $discount = (float)($input['discount'] ?? 0);
+
+            if (!$mappingId) {
+                jsonResponse(['success' => false, 'message' => 'Укажите mapping_id']);
+            }
+
+            $cache = new YMProductCache($auth->getUserId());
+            $result = $cache->updateMappingDiscount($mappingId, $discount);
+            jsonResponse($result);
+            break;
+
+        // Массовое обновление скидки для товара
+        case '/api/yandex/bulk-discount':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $productId = (int)post('product_id', 0);
+            $discount = (float)post('discount', 0);
+
+            if (!$productId) {
+                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+            }
+
+            $cache = new YMProductCache($auth->getUserId());
+            $result = $cache->bulkUpdateDiscount($productId, $discount);
+            jsonResponse(['success' => true, 'message' => "Скидка применена к {$result['updated']} артикулам"]);
+            break;
+
+        // Парсинг артикула
+        case '/api/yandex/parse-article':
+            $auth->requireLogin();
+
+            $offerId = get('offer_id', '') ?: post('offer_id', '');
+            $name = get('name', '') ?: post('name', '');
+
+            $cache = new YMProductCache($auth->getUserId());
+            $parsed = $cache->parseArticle($offerId, $name);
+
+            jsonResponse(['success' => true, 'data' => $parsed]);
+            break;
+
+        // Автозаполнение pieces_per_sheet
+        case '/api/yandex/auto-fill-pieces':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $productId = (int)post('product_id', 0);
+
+            if (!$productId) {
+                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+            }
+
+            try {
+                $cache = new YMProductCache($auth->getUserId());
+                $updated = $cache->autoFillPiecesPerSheet($productId);
+
+                jsonResponse([
+                    'success' => true,
+                    'updated' => $updated,
+                    'message' => "Обновлено {$updated} артикулов"
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Карантин цен ЯМ
+        case '/api/yandex/quarantine':
+            $auth->requireLogin();
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API не настроен']);
+                }
+
+                $result = $ymApi->getQuarantineGoods();
+                jsonResponse($result);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Подтверждение цен в карантине
+        case '/api/yandex/quarantine/confirm':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            $offerIds = $input['offer_ids'] ?? [];
+
+            if (empty($offerIds)) {
+                jsonResponse(['success' => false, 'message' => 'Укажите offer_ids']);
+            }
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+                $result = $ymApi->confirmQuarantine($offerIds);
+                jsonResponse($result);
+            } catch (Exception $e) {
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Загрузка цен на ЯМ
+        case '/api/yandex/upload-prices':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            $items = $input['items'] ?? [];
+
+            if (empty($items)) {
+                jsonResponse(['success' => false, 'message' => 'Нет товаров для загрузки']);
+            }
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API не настроен']);
+                }
+
+                // Формируем массив для API ЯМ
+                $offers = [];
+                foreach ($items as $item) {
+                    $offer = [
+                        'offerId' => $item['offer_id'],
+                        'price' => [
+                            'value' => (float)$item['price'],
+                            'currencyId' => 'RUR'
+                        ]
+                    ];
+
+                    // Зачёркнутая цена (если есть и больше основной)
+                    if (!empty($item['old_price']) && $item['old_price'] > $item['price']) {
+                        $offer['price']['discountBase'] = (float)$item['old_price'];
+                    }
+
+                    $offers[] = $offer;
+                }
+
+                $result = $ymApi->uploadPrices($offers);
+                jsonResponse($result);
+
+            } catch (Exception $e) {
+                ErrorLogger::error('YM upload prices failed', ['error' => $e->getMessage()]);
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Загрузка остатков на ЯМ
+        case '/api/yandex/upload-stocks':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            $items = $input['items'] ?? [];
+
+            if (empty($items)) {
+                jsonResponse(['success' => false, 'message' => 'Нет товаров для загрузки']);
+            }
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API не настроен']);
+                }
+
+                $result = $ymApi->uploadStocks($items);
+                jsonResponse($result);
+
+            } catch (Exception $e) {
+                ErrorLogger::error('YM upload stocks failed', ['error' => $e->getMessage()]);
+                jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        // Рекомендации по ценам ЯМ
+        case '/api/yandex/recommendations':
+            $auth->requireLogin();
+
+            try {
+                $ymApi = new YandexMarketAPI($auth->getUserId());
+
+                if (!$ymApi->isConfigured()) {
+                    jsonResponse(['success' => false, 'message' => 'API не настроен']);
+                }
+
+                $offerIds = get('offer_ids') ? explode(',', get('offer_ids')) : [];
+                $result = $ymApi->getPriceRecommendations($offerIds);
+                jsonResponse($result);
+
             } catch (Exception $e) {
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }

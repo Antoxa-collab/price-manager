@@ -251,18 +251,28 @@ class WildberriesAPI
      */
     public function getWarehouses(): array
     {
+        error_log("[WB getWarehouses] Запрашиваем склады...");
+
         try {
-            $result = $this->request('GET', '/api/v3/warehouses');
+            $result = $this->requestV2('GET', 'marketplace', '/api/v3/warehouses');
+
+            error_log("[WB getWarehouses] Ответ: " . json_encode($result, JSON_UNESCAPED_UNICODE));
+
+            // WB API возвращает массив складов напрямую
+            $warehouses = is_array($result) ? $result : [];
+
+            error_log("[WB getWarehouses] Найдено складов: " . count($warehouses));
 
             return [
                 'success' => true,
-                'data' => $result
+                'warehouses' => $warehouses
             ];
         } catch (Exception $e) {
+            error_log("[WB getWarehouses] ОШИБКА: " . $e->getMessage());
             return [
                 'success' => false,
-                'message' => $e->getMessage(),
-                'data' => []
+                'error' => $e->getMessage(),
+                'warehouses' => []
             ];
         }
     }
@@ -403,11 +413,29 @@ class WildberriesAPI
         // Логируем ошибки
         if ($httpCode >= 400) {
             error_log("[WB API] [$method] $url - HTTP $httpCode");
-            error_log("[WB API] Response: " . substr($response, 0, 500));
+            error_log("[WB API] Response: " . substr($response, 0, 1000));
+
+            // Детальное логирование для HTTP 409
+            if ($httpCode === 409) {
+                error_log("[WB API 409 DEBUG] ===== ПОЛНЫЙ ОТВЕТ =====");
+                error_log("[WB API 409 DEBUG] URL: $url");
+                error_log("[WB API 409 DEBUG] Method: $method");
+                error_log("[WB API 409 DEBUG] Request body: " . json_encode($data, JSON_UNESCAPED_UNICODE));
+                error_log("[WB API 409 DEBUG] Response body: " . $response);
+                error_log("[WB API 409 DEBUG] ===== КОНЕЦ =====");
+            }
         }
 
         if ($httpCode === 429) {
-            throw new Exception("Превышен лимит запросов. Повторите позже.");
+            throw new Exception("Превышен лимит запросов (HTTP 429). Повторите позже.");
+        }
+
+        if ($httpCode === 409) {
+            // Парсим ответ для понимания причины конфликта
+            $errorData = json_decode($response, true);
+            $errorDetail = $errorData['detail'] ?? $errorData['message'] ?? $errorData['error'] ?? $response;
+            error_log("[WB API 409] Причина конфликта: " . (is_array($errorDetail) ? json_encode($errorDetail, JSON_UNESCAPED_UNICODE) : $errorDetail));
+            throw new Exception("HTTP 409 Conflict: " . (is_string($errorDetail) ? $errorDetail : json_encode($errorDetail, JSON_UNESCAPED_UNICODE)));
         }
 
         if ($httpCode === 401) {
@@ -681,25 +709,295 @@ class WildberriesAPI
 
         try {
             $data = [];
+            $sentNmIds = []; // Для отслеживания отправленных nmID
             foreach ($prices as $item) {
+                $nmId = (int)$item['nmID'];
+                $price = (int)$item['price'];
+                $discount = (int)($item['discount'] ?? 0);
+
+                // Валидация: цена должна быть > 0
+                if ($price <= 0) {
+                    error_log("[WB uploadPrices] ПРОПУСК nmID={$nmId}: цена <= 0 ({$price})");
+                    continue;
+                }
+
+                // Валидация: скидка должна быть 0-99
+                if ($discount < 0 || $discount > 99) {
+                    error_log("[WB uploadPrices] ПРОПУСК nmID={$nmId}: скидка вне диапазона 0-99 ({$discount})");
+                    continue;
+                }
+
                 $data[] = [
-                    'nmID' => (int)$item['nmID'],
-                    'price' => (int)$item['price'],
-                    'discount' => (int)($item['discount'] ?? 0)
+                    'nmID' => $nmId,
+                    'price' => $price,
+                    'discount' => $discount
                 ];
+                $sentNmIds[] = $nmId;
+            }
+
+            if (empty($data)) {
+                return ['success' => false, 'error' => 'Все товары отфильтрованы при валидации'];
+            }
+
+            // Подробное логирование отправляемых данных
+            error_log("[WB uploadPrices] ===== ОТПРАВКА ЦЕН =====");
+            error_log("[WB uploadPrices] Товаров: " . count($data));
+            foreach ($data as $item) {
+                error_log("[WB uploadPrices]   nmID={$item['nmID']}, price={$item['price']}, discount={$item['discount']}");
             }
 
             $result = $this->requestV2('POST', 'prices', '/api/v2/upload/task', [
                 'data' => $data
             ]);
 
+            // Логируем полный ответ WB
+            error_log("[WB uploadPrices] Ответ WB (полный): " . json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+
+            // Проверяем на rate limit (WB возвращает error: '1' или error: 1)
+            if (isset($result['error'])) {
+                $errorCode = $result['error'];
+                error_log("[WB uploadPrices] WB вернул ошибку: " . json_encode($errorCode));
+
+                // Rate limit — слишком частые запросы
+                if ($errorCode === '1' || $errorCode === 1) {
+                    return [
+                        'success' => false,
+                        'error' => 'rate_limit',
+                        'error_code' => 'RATE_LIMIT',
+                        'message' => 'WB ограничивает частоту изменения цен (макс. 10 запросов/6 сек). Подождите 5-10 минут и повторите.',
+                        'sent' => count($data),
+                        'sent_nm_ids' => $sentNmIds
+                    ];
+                }
+
+                // Другая ошибка
+                return [
+                    'success' => false,
+                    'error' => is_string($errorCode) ? $errorCode : json_encode($errorCode),
+                    'message' => 'Ошибка WB API: ' . (is_string($errorCode) ? $errorCode : json_encode($errorCode)),
+                    'sent' => count($data)
+                ];
+            }
+
+            // WB API возвращает taskId при успехе
+            // Структура ответа: {"data": {"id": 123456}} или {"alreadyExists": true}
+            $taskId = $result['data']['id'] ?? null;
+            $alreadyExists = $result['alreadyExists'] ?? false;
+
+            // Если задача создана, проверяем её статус (с повторными попытками)
+            if ($taskId) {
+                error_log("[WB uploadPrices] Создана задача #{$taskId}, ожидаем обработки...");
+
+                $status = null;
+                $maxAttempts = 5;
+                $waitMs = 1000; // 1 секунда между попытками
+
+                for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                    usleep($waitMs * 1000);
+                    $status = $this->getUploadTaskStatus($taskId);
+                    error_log("[WB uploadPrices] Попытка #{$attempt}: статус задачи #{$taskId}: " . json_encode($status, JSON_UNESCAPED_UNICODE));
+
+                    // Если задача обработана (статус 3, 5, 6) — выходим
+                    if (($status['isProcessed'] ?? false) || ($status['status'] ?? 0) >= 3) {
+                        break;
+                    }
+
+                    // Увеличиваем время ожидания для следующей попытки
+                    $waitMs = min($waitMs * 1.5, 3000);
+                }
+
+                $processed = $status['processed'] ?? 0;
+                $errors = $status['errors'] ?? [];
+                $errorCount = count($errors);
+                $taskStatus = $status['status'] ?? 0;
+
+                // Если есть ошибки, логируем их подробно
+                if ($errorCount > 0) {
+                    error_log("[WB uploadPrices] ===== ОШИБКИ WB =====");
+                    foreach ($errors as $err) {
+                        error_log("[WB uploadPrices] nmID={$err['nmID']}: {$err['error']}");
+                    }
+                    error_log("[WB uploadPrices] ===== КОНЕЦ ОШИБОК =====");
+                }
+
+                // Вычисляем какие nmID были успешно обработаны
+                $errorNmIds = array_column($errors, 'nmID');
+                $successNmIds = array_diff($sentNmIds, $errorNmIds);
+
+                return [
+                    'success' => true,
+                    'taskId' => $taskId,
+                    'taskStatus' => $taskStatus,
+                    'sent' => count($data),
+                    'updated' => $processed ?: (count($data) - $errorCount),
+                    'error_count' => $errorCount,
+                    'errors' => $errors,
+                    'error_nm_ids' => $errorNmIds,
+                    'success_nm_ids' => array_values($successNmIds),
+                    'alreadyExists' => $alreadyExists,
+                    'message' => "Задача #{$taskId}: обработано " . ($processed ?: (count($data) - $errorCount)) . " из " . count($data) . " товаров."
+                        . ($errorCount > 0 ? " Ошибок: {$errorCount}" : "")
+                ];
+            }
+
+            // Если alreadyExists — цены уже актуальны
+            if ($alreadyExists) {
+                return [
+                    'success' => true,
+                    'taskId' => null,
+                    'sent' => count($data),
+                    'updated' => count($data),
+                    'alreadyExists' => true,
+                    'message' => "Цены уже актуальны для " . count($data) . " товаров."
+                ];
+            }
+
             return [
                 'success' => true,
-                'taskId' => $result['data']['id'] ?? null,
-                'updated' => count($data)
+                'taskId' => $taskId,
+                'sent' => count($data),
+                'updated' => count($data),
+                'message' => "Отправлено " . count($data) . " товаров."
             ];
         } catch (Exception $e) {
+            error_log("[WB uploadPrices] КРИТИЧЕСКАЯ ОШИБКА: " . $e->getMessage());
+            error_log("[WB uploadPrices] Trace: " . $e->getTraceAsString());
             return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Получить статус задачи загрузки цен
+     * GET /api/v2/history/tasks
+     *
+     * Статусы WB:
+     * 1 = в очереди
+     * 2 = в обработке
+     * 3 = успешно обработано
+     * 4 = отменено
+     * 5 = частично обработано (есть ошибки)
+     * 6 = все товары с ошибками
+     */
+    public function getUploadTaskStatus(int $taskId): array
+    {
+        try {
+            error_log("[WB getUploadTaskStatus] Запрашиваем статус задачи #{$taskId}");
+
+            $result = $this->requestV2('GET', 'prices', '/api/v2/history/tasks', [], [
+                'limit' => 20  // Увеличили лимит для надёжности
+            ]);
+
+            error_log("[WB getUploadTaskStatus] Ответ WB (полный): " . json_encode($result, JSON_UNESCAPED_UNICODE));
+
+            // Ищем нашу задачу в списке
+            $tasks = $result['data']['historyTasks'] ?? [];
+            error_log("[WB getUploadTaskStatus] Найдено задач в истории: " . count($tasks));
+
+            foreach ($tasks as $task) {
+                $uploadId = $task['uploadID'] ?? 0;
+                if ($uploadId === $taskId) {
+                    $status = $task['status'] ?? 0;
+                    // Статусы: 3 = успешно, 5 = частично с ошибками, 6 = все ошибки
+                    $isProcessed = in_array($status, [3, 5, 6]);
+                    $hasErrors = in_array($status, [5, 6]);
+
+                    $processed = $task['processedCount'] ?? $task['goodsCount'] ?? 0;
+                    $total = $task['goodsCount'] ?? 0;
+
+                    error_log("[WB getUploadTaskStatus] Задача #{$taskId} найдена: status={$status}, processed={$processed}/{$total}, hasErrors=" . ($hasErrors ? 'yes' : 'no'));
+
+                    // Если есть ошибки ИЛИ обработано меньше чем отправлено — запрашиваем детали
+                    $errors = [];
+                    if ($hasErrors || ($isProcessed && $processed < $total)) {
+                        error_log("[WB getUploadTaskStatus] Запрашиваем детали ошибок для задачи #{$taskId}");
+                        $details = $this->getUploadTaskDetails($taskId);
+                        $errors = $details['errors'] ?? [];
+                        error_log("[WB getUploadTaskStatus] Получено ошибок: " . count($errors));
+                    }
+
+                    return [
+                        'taskId' => $taskId,
+                        'status' => $status,
+                        'isProcessed' => $isProcessed,
+                        'processed' => $processed,
+                        'total' => $total,
+                        'errors' => $errors,
+                        'rawTask' => $task  // Для отладки
+                    ];
+                }
+            }
+
+            error_log("[WB getUploadTaskStatus] Задача #{$taskId} НЕ найдена в истории (ещё в очереди?)");
+
+            // Задача не найдена в истории — возможно ещё в очереди
+            return [
+                'taskId' => $taskId,
+                'status' => 0,
+                'isProcessed' => false,
+                'processed' => 0,
+                'total' => 0,
+                'errors' => []
+            ];
+        } catch (Exception $e) {
+            error_log("[WB getUploadTaskStatus] ОШИБКА: " . $e->getMessage());
+            return [
+                'taskId' => $taskId,
+                'status' => -1,
+                'isProcessed' => false,
+                'processed' => 0,
+                'total' => 0,
+                'errors' => [['nmID' => 0, 'error' => 'Не удалось получить статус: ' . $e->getMessage()]]
+            ];
+        }
+    }
+
+    /**
+     * Получить детали задачи загрузки (ошибки)
+     * GET /api/v2/history/goods/task/{taskId}
+     */
+    public function getUploadTaskDetails(int $taskId): array
+    {
+        try {
+            error_log("[WB getUploadTaskDetails] Запрашиваем детали задачи #{$taskId}");
+
+            $result = $this->requestV2('GET', 'prices', "/api/v2/history/goods/task", [], [
+                'uploadID' => $taskId,
+                'limit' => 100
+            ]);
+
+            error_log("[WB getUploadTaskDetails] Ответ WB: " . json_encode($result, JSON_UNESCAPED_UNICODE));
+
+            $errors = [];
+            $goods = $result['data']['historyGoods'] ?? [];
+
+            error_log("[WB getUploadTaskDetails] Товаров в ответе: " . count($goods));
+
+            foreach ($goods as $good) {
+                $nmId = $good['nmID'] ?? 0;
+                $errorText = $good['errorText'] ?? '';
+                $status = $good['status'] ?? 0;
+
+                // Статус товара: 3 = успех, другие = ошибки
+                $hasError = !empty($errorText) || $status != 3;
+
+                if ($hasError) {
+                    $errors[] = [
+                        'nmID' => $nmId,
+                        'error' => $errorText ?: "Статус: {$status}",
+                        'status' => $status,
+                        'price' => $good['price'] ?? null,
+                        'discount' => $good['discount'] ?? null
+                    ];
+                    error_log("[WB getUploadTaskDetails] Ошибка: nmID={$nmId}, error='{$errorText}', status={$status}");
+                }
+            }
+
+            error_log("[WB getUploadTaskDetails] Всего ошибок: " . count($errors));
+
+            return ['errors' => $errors, 'goods' => $goods];
+        } catch (Exception $e) {
+            error_log("[WB getUploadTaskDetails] ОШИБКА: " . $e->getMessage());
+            return ['errors' => [], 'goods' => []];
         }
     }
 
@@ -735,26 +1033,104 @@ class WildberriesAPI
             return ['success' => false, 'error' => 'Пустой массив остатков'];
         }
 
+        // Фильтруем пустые SKU — они вызывают HTTP 409
+        $filteredStocks = array_filter($stocks, function ($item) {
+            $sku = (string)($item['sku'] ?? '');
+            return !empty($sku) && strlen($sku) >= 8;
+        });
+
+        if (empty($filteredStocks)) {
+            error_log("[WB updateStocksV3] Все SKU отфильтрованы как невалидные");
+            return [
+                'success' => false,
+                'error' => 'Нет валидных баркодов для загрузки. Минимальная длина баркода: 8 символов.'
+            ];
+        }
+
         try {
             $data = [
-                'stocks' => array_map(function ($item) {
+                'stocks' => array_values(array_map(function ($item) {
                     return [
                         'sku' => (string)$item['sku'],
                         'amount' => max(0, (int)$item['amount'])
                     ];
-                }, $stocks)
+                }, $filteredStocks))
             ];
 
-            $this->requestV2('PUT', 'marketplace', "/api/v3/stocks/{$warehouseId}", $data);
+            // Логируем отправляемые данные
+            error_log("[WB updateStocksV3] Склад: {$warehouseId}, товаров: " . count($filteredStocks) . " (из " . count($stocks) . ")");
+            error_log("[WB updateStocksV3] Данные: " . json_encode($data, JSON_UNESCAPED_UNICODE));
+
+            $result = $this->requestV2('PUT', 'marketplace', "/api/v3/stocks/{$warehouseId}", $data);
+
+            // Логируем ответ WB
+            error_log("[WB updateStocksV3] Ответ WB: " . json_encode($result, JSON_UNESCAPED_UNICODE));
 
             return [
                 'success' => true,
-                'updated' => count($stocks),
-                'warehouse_id' => $warehouseId
+                'updated' => count($filteredStocks),
+                'warehouse_id' => $warehouseId,
+                'skipped' => count($stocks) - count($filteredStocks)
             ];
         } catch (Exception $e) {
-            return ['success' => false, 'error' => $e->getMessage()];
+            $errorMsg = $e->getMessage();
+            error_log("[WB updateStocksV3] ОШИБКА: " . $errorMsg);
+
+            // Парсим ошибку КГТ (CargoWarehouseRestrictionSGTKGTPlus)
+            $oversizedSkus = $this->parseOversizedSkusFromError($errorMsg);
+
+            // Возвращаем детальную информацию для отладки
+            return [
+                'success' => false,
+                'error' => $errorMsg,
+                'warehouse_id' => $warehouseId,
+                'stocks_count' => count($filteredStocks),
+                'debug_skus' => array_slice(array_column($filteredStocks, 'sku'), 0, 5),
+                'oversized_skus' => $oversizedSkus // SKU, которые WB пометил как КГТ
+            ];
         }
+    }
+
+    /**
+     * Парсинг SKU из ошибки CargoWarehouseRestrictionSGTKGTPlus
+     * Формат ошибки: HTTP 409 Conflict: [{"data":[{"sku":"2042764943238"...}],"code":"CargoWarehouseRestrictionSGTKGTPlus"...}]
+     *
+     * @param string $errorMsg Сообщение об ошибке
+     * @return array Массив SKU (баркодов), которые WB пометил как КГТ
+     */
+    private function parseOversizedSkusFromError(string $errorMsg): array
+    {
+        $oversizedSkus = [];
+
+        // Проверяем, что это ошибка КГТ
+        if (strpos($errorMsg, 'CargoWarehouseRestrictionSGTKGTPlus') === false) {
+            return [];
+        }
+
+        // Ищем JSON в сообщении об ошибке (после "HTTP 409 Conflict: ")
+        if (preg_match('/HTTP 409 Conflict:\s*(.+)$/s', $errorMsg, $matches)) {
+            $jsonStr = $matches[1];
+
+            // Парсим JSON
+            $data = json_decode($jsonStr, true);
+            if (is_array($data)) {
+                foreach ($data as $item) {
+                    if (isset($item['data']) && is_array($item['data'])) {
+                        foreach ($item['data'] as $skuData) {
+                            if (!empty($skuData['sku'])) {
+                                $oversizedSkus[] = (string)$skuData['sku'];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!empty($oversizedSkus)) {
+            error_log("[WB updateStocksV3] Обнаружено КГТ-товаров: " . count($oversizedSkus) . " - " . implode(', ', array_slice($oversizedSkus, 0, 5)));
+        }
+
+        return $oversizedSkus;
     }
 
     // ==================== ОТЗЫВЫ ====================
@@ -1198,5 +1574,120 @@ class WildberriesAPI
         }
 
         return $result;
+    }
+
+    // ==================== КАРАНТИН ЦЕН ====================
+
+    /**
+     * Получить товары в карантине цен
+     * GET /api/v2/quarantine
+     *
+     * Карантин — это состояние, когда WB блокирует изменение цены товара.
+     * Причины попадания в карантин:
+     * - Новая цена со скидкой в 3+ раза меньше старой
+     * - Резкое изменение цены
+     *
+     * @param int $limit Количество товаров (макс 1000)
+     * @param int $offset Смещение для пагинации
+     * @return array Товары в карантине
+     */
+    public function getQuarantineGoods(int $limit = 1000, int $offset = 0): array
+    {
+        try {
+            error_log("[WB getQuarantineGoods] Запрашиваем карантин: limit={$limit}, offset={$offset}");
+
+            $result = $this->requestV2('GET', 'prices', '/api/v2/quarantine', [], [
+                'limit' => min($limit, 1000),
+                'offset' => $offset
+            ]);
+
+            error_log("[WB getQuarantineGoods] Ответ WB: " . json_encode($result, JSON_UNESCAPED_UNICODE));
+
+            $quarantineGoods = $result['data']['quarantineGoods'] ?? [];
+
+            // Форматируем для удобства
+            $goods = [];
+            foreach ($quarantineGoods as $item) {
+                $goods[] = [
+                    'nmID' => $item['nmID'] ?? 0,
+                    'vendorCode' => $item['vendorCode'] ?? '',
+                    'currentPrice' => $item['price'] ?? 0,
+                    'currentDiscount' => $item['discount'] ?? 0,
+                    'newPrice' => $item['newPrice'] ?? 0,
+                    'newDiscount' => $item['newDiscount'] ?? 0,
+                    'reason' => $this->translateQuarantineReason($item['warningType'] ?? '')
+                ];
+            }
+
+            return [
+                'success' => true,
+                'quarantine' => $goods,
+                'total' => count($goods)
+            ];
+        } catch (Exception $e) {
+            error_log("[WB getQuarantineGoods] ОШИБКА: " . $e->getMessage());
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'quarantine' => []
+            ];
+        }
+    }
+
+    /**
+     * Проверить, находятся ли указанные nmID в карантине
+     *
+     * @param array $nmIds Массив nmID для проверки
+     * @return array ['inQuarantine' => [...], 'clear' => [...]]
+     */
+    public function checkQuarantine(array $nmIds): array
+    {
+        if (empty($nmIds)) {
+            return ['inQuarantine' => [], 'clear' => $nmIds];
+        }
+
+        $quarantine = $this->getQuarantineGoods(1000);
+        if (!$quarantine['success']) {
+            // Если не удалось получить карантин — считаем все товары "чистыми"
+            error_log("[WB checkQuarantine] Не удалось получить карантин, продолжаем без проверки");
+            return ['inQuarantine' => [], 'clear' => $nmIds, 'error' => $quarantine['error']];
+        }
+
+        $quarantineNmIds = array_column($quarantine['quarantine'], 'nmID');
+        $inQuarantine = [];
+        $clear = [];
+
+        foreach ($nmIds as $nmId) {
+            if (in_array((int)$nmId, $quarantineNmIds)) {
+                // Найдём детали карантина
+                $idx = array_search((int)$nmId, $quarantineNmIds);
+                $inQuarantine[] = $quarantine['quarantine'][$idx];
+            } else {
+                $clear[] = $nmId;
+            }
+        }
+
+        error_log("[WB checkQuarantine] Проверено: " . count($nmIds) . ", в карантине: " . count($inQuarantine) . ", чистых: " . count($clear));
+
+        return [
+            'inQuarantine' => $inQuarantine,
+            'clear' => $clear
+        ];
+    }
+
+    /**
+     * Перевод причины карантина на русский
+     */
+    private function translateQuarantineReason(string $warningType): string
+    {
+        $reasons = [
+            'priceDropMoreThan3Times' => 'Цена снижена более чем в 3 раза',
+            'priceIncreaseMoreThan3Times' => 'Цена повышена более чем в 3 раза',
+            'discountTooHigh' => 'Слишком высокая скидка',
+            'priceTooLow' => 'Цена ниже минимальной',
+            'suspiciousPriceChange' => 'Подозрительное изменение цены'
+        ];
+
+        return $reasons[$warningType] ?? $warningType ?: 'Неизвестная причина';
     }
 }

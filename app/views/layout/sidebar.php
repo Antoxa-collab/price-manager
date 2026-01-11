@@ -39,17 +39,20 @@
                 </a>
             </div>
 
-            <!-- Яндекс.Маркет - скоро -->
-            <div class="nav-item-group disabled-group">
-                <div class="nav-group-header px-3 py-2 d-flex align-items-center text-muted">
-                    <i class="bi bi-circle-fill me-2" style="font-size: 0.5rem;"></i>
+            <!-- Яндекс.Маркет - активный -->
+            <div class="nav-item-group">
+                <div class="nav-group-header px-3 py-2 d-flex align-items-center">
+                    <i class="bi bi-circle-fill text-warning me-2" style="font-size: 0.5rem;"></i>
                     <span class="fw-medium">Яндекс.Маркет</span>
-                    <span class="badge bg-secondary ms-auto small">скоро</span>
                 </div>
-                <span class="nav-link nav-link-sub disabled text-muted">
+                <a class="nav-link nav-link-sub <?= isActive('/yandex') ?>" href="/yandex">
                     <i class="bi bi-calculator"></i>
                     <span>Калькулятор цен</span>
-                </span>
+                </a>
+                <a class="nav-link nav-link-sub <?= isActive('/yandex/mapping') ?>" href="/yandex/mapping">
+                    <i class="bi bi-link-45deg"></i>
+                    <span>Сопоставление товаров</span>
+                </a>
             </div>
 
             <hr class="my-2 border-secondary">
@@ -126,13 +129,16 @@
             // Проверяем статус подключения к API маркетплейсов
             $wbConfigured = false;
             $ozonConfigured = false;
+            $ymConfigured = false;
 
             if (isset($auth) && $auth->isLoggedIn()) {
                 $userId = $auth->getUserId();
                 $wbApi = new WildberriesAPI($userId);
                 $ozonApi = new OzonAPI($userId);
+                $ymApi = new YandexMarketAPI($userId);
                 $wbConfigured = $wbApi->isConfigured();
                 $ozonConfigured = $ozonApi->isConfigured();
+                $ymConfigured = $ymApi->isConfigured();
             }
             ?>
 
@@ -157,8 +163,13 @@
             </div>
 
             <div class="d-flex align-items-center">
-                <span class="status-dot bg-secondary me-2"></span>
-                <span class="small text-muted">Яндекс.Маркет</span>
+                <span class="status-dot <?= $ymConfigured ? 'bg-success' : 'bg-danger' ?> me-2"></span>
+                <span class="small">Яндекс.Маркет</span>
+                <?php if ($ymConfigured): ?>
+                <i class="bi bi-check-circle-fill text-success ms-auto small"></i>
+                <?php else: ?>
+                <i class="bi bi-x-circle-fill text-danger ms-auto small"></i>
+                <?php endif; ?>
             </div>
         </div>
     </div>
