@@ -13,6 +13,34 @@ class ProductMapping
     }
 
     /**
+     * Кэш существующих колонок в product_mappings
+     * @var array|null
+     */
+    private static ?array $existingColumns = null;
+
+    /**
+     * Проверить существование колонки в product_mappings
+     * @param string $columnName Имя колонки
+     * @return bool
+     */
+    private function hasColumn(string $columnName): bool
+    {
+        if (self::$existingColumns === null) {
+            try {
+                $result = $this->db->fetchAll(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE()
+                       AND TABLE_NAME = 'product_mappings'"
+                );
+                self::$existingColumns = array_column($result, 'COLUMN_NAME');
+            } catch (Exception $e) {
+                self::$existingColumns = [];
+            }
+        }
+        return in_array($columnName, self::$existingColumns);
+    }
+
+    /**
      * Получить все сопоставления для товара
      * @param int $productId ID нашего товара
      * @param string $marketplace Маркетплейс (ozon, wildberries, yandex)
@@ -20,10 +48,25 @@ class ProductMapping
      */
     public function getByProduct(int $productId, string $marketplace = 'ozon'): array
     {
+        // Динамически определяем какие колонки запрашивать
+        $cachedColumns = $this->hasColumn('cached_price')
+            ? "pm.cached_price, pm.cached_stock,"
+            : "NULL as cached_price, NULL as cached_stock,";
+
+        $discountColumns = $this->hasColumn('custom_discount')
+            ? "pm.custom_discount, pm.is_discount_edited,"
+            : "NULL as custom_discount, 0 as is_discount_edited,";
+
+        $costPrice = $this->hasColumn('cost_price')
+            ? "pm.cost_price,"
+            : "0 as cost_price,";
+
         $sql = "SELECT pm.id as mapping_id, pm.product_id, pm.marketplace,
                        pm.marketplace_product_id, pm.marketplace_sku,
                        pm.marketplace_offer_id, pm.marketplace_name,
                        pm.quantity_in_pack, pm.pieces_per_sheet,
+                       {$cachedColumns} {$costPrice}
+                       {$discountColumns}
                        mpc.name as cached_name, mpc.price as mp_price,
                        mpc.min_price as mp_min_price, mpc.old_price as mp_old_price,
                        mpc.stock as mp_stock

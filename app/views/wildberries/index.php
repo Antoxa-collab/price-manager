@@ -262,8 +262,8 @@ include VIEWS_PATH . '/layout/header.php';
                         <th style="width: 40px;">
                             <input type="checkbox" class="form-check-input" id="selectAllCheckbox" title="Выбрать все">
                         </th>
-                        <th>Артикул WB</th>
-                        <th>Название</th>
+                        <th class="sortable" data-sort="article" onclick="WBCalculator.handleSortClick('article')">Артикул WB</th>
+                        <th class="sortable" data-sort="name" onclick="WBCalculator.handleSortClick('name')">Название</th>
                         <th class="text-center" style="width: 100px;">Из листа/Упак.</th>
                         <th class="text-end" style="width: 100px;">
                             <span class="text-warning">Наценка</span>
@@ -449,7 +449,184 @@ include VIEWS_PATH . '/layout/header.php';
     </div>
 
 </div>
-<!-- ==================== КОНЕЦ ВКЛАДКИ: Раскрой листов ==================== -->
+
+<!-- ==================== ВИЗУАЛЬНЫЙ КАЛЬКУЛЯТОР РАСКРОЯ ==================== -->
+<div class="row mt-4 mb-4" id="wbVisualCuttingSection">
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary">
+                <i class="bi bi-grid-3x3 me-2"></i>
+                <span class="text-success"><strong>Визуальный калькулятор раскроя</strong></span>
+            </div>
+            <div class="card-body">
+                <!-- Параметры расчёта -->
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Исходный лист</label>
+                        <select id="vcSheetSelect" class="form-select">
+                            <option value="">Выберите лист...</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Ширина (мм)</label>
+                        <input type="number" id="vcPieceWidth" class="form-control" placeholder="600" min="1">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Высота (мм)</label>
+                        <input type="number" id="vcPieceHeight" class="form-control" placeholder="900" min="1">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Пропил (мм)</label>
+                        <input type="number" id="vcKerfWidth" class="form-control" value="3" min="0" max="10">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end gap-2">
+                        <button type="button" id="vcCalculateBtn" class="btn btn-primary flex-grow-1">
+                            <i class="bi bi-calculator me-1"></i>Рассчитать
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Управление видом -->
+                <div class="btn-group mb-3" role="group">
+                    <button type="button" id="vcZoomIn" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-zoom-in"></i> Приблизить
+                    </button>
+                    <button type="button" id="vcZoomOut" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-zoom-out"></i> Отдалить
+                    </button>
+                    <button type="button" id="vcResetView" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrows-fullscreen"></i> Сброс вида
+                    </button>
+                    <button type="button" id="vcToggleDimensions" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-rulers"></i> Размеры вкл/выкл
+                    </button>
+                </div>
+                
+                <!-- Подсказка -->
+                <div class="text-muted small mb-3">
+                    <i class="bi bi-info-circle"></i> 
+                    Перетащите деталь мышкой для перемещения. 
+                    Двойной клик — поворот на 90°.
+                </div>
+
+                <!-- SVG визуализация и результаты -->
+                <div class="row">
+                    <!-- SVG область -->
+                    <div class="col-lg-8">
+                        <div id="vcSvgContainer" class="border rounded p-3 bg-dark" style="min-height: 450px; display: flex; justify-content: center; align-items: center; overflow: auto;">
+                            <svg id="vcSvgSheet" width="100%" height="450" viewBox="0 0 2500 2500"></svg>
+                        </div>
+                        
+                        <!-- Информационная панель размеров -->
+                        <div id="vcDimensionsPanel" class="card bg-dark text-white mt-3 border-secondary d-none">
+                            <div class="card-header">
+                                <i class="bi bi-rulers me-2"></i> <strong>Параметры раскроя</strong>
+                            </div>
+                            <div class="card-body p-2">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <small class="text-muted">Лист:</small>
+                                        <div id="vcDimSheet" class="fs-6" style="color: #4CAF50;">2800 × 2070 мм</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Деталь:</small>
+                                        <div id="vcDimPiece" class="fs-6" style="color: #2196F3;">800 × 600 мм</div>
+                                    </div>
+                                </div>
+                                <hr class="my-2">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <small class="text-muted">Пропил:</small>
+                                        <div id="vcDimKerf" class="fs-6" style="color: #FF9800;">3 мм</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Эффективный размер:</small>
+                                        <div id="vcDimEffective" class="fs-6" style="color: #FF9800;">803 × 603 мм</div>
+                                    </div>
+                                </div>
+                                <hr class="my-2">
+                                <div>
+                                    <small class="text-muted">Неиспользованные области:</small>
+                                    <ul id="vcDimWaste" class="mb-0 mt-1" style="color: #ff6b6b; font-size: 0.9rem;">
+                                        <li>Справа: 400 × 2070 мм</li>
+                                        <li>Снизу: 2400 × 270 мм</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-center text-muted mt-2 small">
+                            <i class="bi bi-info-circle me-1"></i> Клик по детали — поворот на 90°
+                        </div>
+                    </div>
+
+                    <!-- Результаты -->
+                    <div class="col-lg-4">
+                        <!-- Плейсхолдер -->
+                        <div id="vcPlaceholder" class="text-center text-muted py-5">
+                            <i class="bi bi-grid-3x3" style="font-size: 3rem; opacity: 0.5;"></i>
+                            <p class="mt-3 small">Выберите лист и укажите размер детали</p>
+                        </div>
+
+                        <!-- Результаты расчёта -->
+                        <div id="vcResults" class="d-none">
+                            <div class="card bg-secondary border-secondary mb-3">
+                                <div class="card-header bg-success">
+                                    <strong><i class="bi bi-bar-chart me-1"></i>Результат расчёта</strong>
+                                </div>
+                                <div class="card-body p-2">
+                                    <table class="table table-sm table-dark mb-0">
+                                        <tbody>
+                                            <tr>
+                                                <td class="small">Деталей на листе:</td>
+                                                <td class="text-end"><strong id="vcResultCount" class="text-info">0</strong> шт</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="small">Размещение:</td>
+                                                <td class="text-end small" id="vcResultLayout">-</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="small">Использовано:</td>
+                                                <td class="text-end"><strong id="vcResultUsage" class="text-success">0%</strong></td>
+                                            </tr>
+                                            <tr>
+                                                <td class="small">Остаток:</td>
+                                                <td class="text-end small" id="vcResultWaste">-</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Варианты раскроя -->
+                            <div class="card bg-secondary border-secondary mb-3">
+                                <div class="card-header bg-info">
+                                    <strong><i class="bi bi-diagram-3 me-1"></i>Варианты раскроя</strong>
+                                </div>
+                                <div class="card-body p-2">
+                                    <div id="vcVariants" style="max-height: 180px; overflow-y: auto;">
+                                        <!-- Кнопки вариантов вставляются сюда -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Действия -->
+                            <div class="d-grid gap-2">
+                                <button type="button" id="vcApplyBtn" class="btn btn-success btn-sm">
+                                    <i class="bi bi-check-circle me-1"></i>Применить в справочник
+                                </button>
+                                <button type="button" id="vcDownloadBtn" class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-download me-1"></i>Скачать PNG
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- ==================== КОНЕЦ ВИЗУАЛЬНОГО КАЛЬКУЛЯТОРА ==================== -->
 
 </div>
 <!-- ==================== КОНЕЦ tab-content ==================== -->
@@ -698,5 +875,7 @@ include VIEWS_PATH . '/layout/header.php';
         </div>
     </div>
 </div>
+
+<script src="/js/visual-cutting-calculator.js"></script>
 
 <?php include VIEWS_PATH . '/layout/footer.php'; ?>

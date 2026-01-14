@@ -16,6 +16,17 @@ const App = {
         this.initMobileMenu();
         this.initResponsiveTables();
         this.initCopyButtons();
+        this.loadDeployInfo();
+
+        // Автообновление индикатора деплоя каждые 10 секунд
+        setInterval(() => this.loadDeployInfo(), 10000);
+
+        // Обновлять при возврате на вкладку
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                this.loadDeployInfo();
+            }
+        });
     },
 
     /**
@@ -89,6 +100,39 @@ const App = {
         }
 
         document.body.removeChild(textarea);
+    },
+
+    /**
+     * Загрузка информации о деплое (время модификации index.php)
+     */
+    async loadDeployInfo() {
+        try {
+            // Добавляем timestamp чтобы избежать кэширования браузером
+            const response = await fetch('/api/deploy-info?_=' + Date.now());
+            const data = await response.json();
+
+            if (data.success) {
+                const deployEl = document.getElementById('deployTime');
+                const deployContainer = document.getElementById('deployInfo');
+
+                if (deployEl) {
+                    const newTime = data.deploy_short;
+                    const oldTime = deployEl.textContent;
+
+                    deployEl.textContent = newTime;
+                    deployContainer.title = `Последний деплой: ${data.deploy_formatted}\nФайл: ${data.file}`;
+
+                    // Анимация если время изменилось
+                    if (oldTime !== '—' && oldTime !== newTime && deployContainer) {
+                        deployContainer.classList.add('updated');
+                        setTimeout(() => deployContainer.classList.remove('updated'), 500);
+                    }
+                }
+            }
+        } catch (error) {
+            // Тихо игнорируем ошибки - индикатор просто останется в состоянии "—"
+            console.debug('[DeployInfo] Ошибка:', error);
+        }
     },
 
     /**

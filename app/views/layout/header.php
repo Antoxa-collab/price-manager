@@ -42,7 +42,7 @@
     <!-- Верхняя навигация -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top border-bottom border-secondary">
         <div class="container-fluid">
-            <a class="navbar-brand d-flex align-items-center" href="/">
+            <a class="navbar-brand d-flex align-items-center logo-animated" href="/">
                 <img src="/images/logo.png" alt="<?= APP_NAME ?>" height="32" class="me-2">
             </a>
 
@@ -75,6 +75,13 @@
                 </ul>
 
                 <?php if (isset($auth) && $auth->isLoggedIn()): ?>
+                <!-- Индикатор деплоя -->
+                <div class="deploy-info d-none d-lg-flex align-items-center me-3" id="deployInfo" title="Последняя синхронизация с сервером">
+                    <span class="deploy-icon">🚀</span>
+                    <span class="deploy-label text-muted me-1">Деплой:</span>
+                    <span class="deploy-time" id="deployTime">—</span>
+                </div>
+
                 <ul class="navbar-nav">
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">

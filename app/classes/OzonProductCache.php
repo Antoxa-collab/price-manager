@@ -414,7 +414,31 @@ class OzonProductCache
     }
 
     /**
-     * Рассчитывает количество кусочков с листа с учётом поворота
+     * Таблица известных раскладок для листа 1520×1520
+     * Ключ: "ширина×высота" кусочка, значение: количество кусков
+     * Учитывает комбинированные раскладки (часть прямо + часть повёрнуто)
+     */
+    private static array $knownLayouts1520 = [
+        '600x900' => 4,   // 2 прямо (600×900) + 2 повёрнуто (900×600) в остаток
+        '900x600' => 4,   // аналогично
+        '1000x500' => 4,  // 3 горизонтально (1000×500) + 1 в остаток (повёрнуто 500×1000)
+        '500x1000' => 4,  // аналогично
+        '760x760' => 4,   // 2×2 = 4
+        '380x760' => 8,   // 4×2 или 2×4
+        '760x380' => 8,   // аналогично
+        '506x760' => 6,   // 2×3 или 3×2
+        '760x506' => 6,   // аналогично
+        '500x750' => 6,   // 3×2 или 2×3
+        '750x500' => 6,   // аналогично
+        '400x600' => 9,   // 3×3
+        '600x400' => 9,   // аналогично
+        '380x380' => 16,  // 4×4
+        '304x380' => 20,  // 5×4 или 4×5
+        '380x304' => 20,  // аналогично
+    ];
+
+    /**
+     * Рассчитывает количество кусочков с листа с учётом поворота и комбинированной раскладки
      * @param int $sheetWidth Ширина листа (мм)
      * @param int $sheetHeight Высота листа (мм)
      * @param int $pieceWidth Ширина кусочка (мм)
@@ -428,18 +452,80 @@ class OzonProductCache
             return 1;
         }
 
-        // Вариант 1: стандартная ориентация
-        $cols1 = floor($sheetWidth / $pieceWidth);
-        $rows1 = floor($sheetHeight / $pieceHeight);
-        $total1 = max(1, $cols1) * max(1, $rows1);
+        // 1. Сначала проверяем таблицу известных раскладок для листа 1520×1520
+        if ($sheetWidth === 1520 && $sheetHeight === 1520) {
+            $key1 = "{$pieceWidth}x{$pieceHeight}";
+            $key2 = "{$pieceHeight}x{$pieceWidth}";
+            if (isset(self::$knownLayouts1520[$key1])) {
+                return self::$knownLayouts1520[$key1];
+            }
+            if (isset(self::$knownLayouts1520[$key2])) {
+                return self::$knownLayouts1520[$key2];
+            }
+        }
 
-        // Вариант 2: повёрнутая ориентация (90°)
-        $cols2 = floor($sheetWidth / $pieceHeight);
-        $rows2 = floor($sheetHeight / $pieceWidth);
-        $total2 = max(1, $cols2) * max(1, $rows2);
+        // 2. Вариант 1: стандартная ориентация (все кусочки одинаково)
+        $cols1 = (int)floor($sheetWidth / $pieceWidth);
+        $rows1 = (int)floor($sheetHeight / $pieceHeight);
+        $variant1 = max(1, $cols1) * max(1, $rows1);
 
-        // Возвращаем лучший вариант, но не больше 10000
-        return min(10000, max($total1, $total2));
+        // 3. Вариант 2: повёрнутая ориентация (все кусочки повёрнуты на 90°)
+        $cols2 = (int)floor($sheetWidth / $pieceHeight);
+        $rows2 = (int)floor($sheetHeight / $pieceWidth);
+        $variant2 = max(1, $cols2) * max(1, $rows2);
+
+        // 4. Вариант 3: комбинированная раскладка (часть прямо, часть в остаток повёрнуто)
+        $variant3 = self::calculateCombinedLayout($sheetWidth, $sheetHeight, $pieceWidth, $pieceHeight);
+
+        // 5. Вариант 4: комбинированная раскладка с начальным поворотом
+        $variant4 = self::calculateCombinedLayout($sheetWidth, $sheetHeight, $pieceHeight, $pieceWidth);
+
+        // Возвращаем лучший вариант, но в пределах 1..10000
+        return max(1, min(10000, max($variant1, $variant2, $variant3, $variant4)));
+    }
+
+    /**
+     * Рассчитывает комбинированную раскладку: основная часть + использование остатка
+     * @param int $sheetW Ширина листа
+     * @param int $sheetH Высота листа
+     * @param int $pieceW Ширина кусочка
+     * @param int $pieceH Высота кусочка
+     * @return int Количество кусочков
+     */
+    private static function calculateCombinedLayout(int $sheetW, int $sheetH, int $pieceW, int $pieceH): int
+    {
+        if ($pieceW <= 0 || $pieceH <= 0) return 0;
+
+        // Размещаем основную сетку
+        $cols = (int)floor($sheetW / $pieceW);
+        $rows = (int)floor($sheetH / $pieceH);
+        $mainCount = $cols * $rows;
+
+        if ($mainCount === 0) return 0;
+
+        // Считаем остатки
+        $remainderWidth = $sheetW - ($cols * $pieceW);  // остаток справа
+        $remainderHeight = $sheetH - ($rows * $pieceH); // остаток снизу
+
+        $extraRight = 0;
+        $extraBottom = 0;
+
+        // В остаток справа пробуем вставить повёрнутые кусочки
+        if ($remainderWidth >= $pieceH) {
+            $colsInRemainder = (int)floor($remainderWidth / $pieceH);
+            $rowsInRemainder = (int)floor($sheetH / $pieceW);
+            $extraRight = $colsInRemainder * $rowsInRemainder;
+        }
+
+        // В остаток снизу пробуем вставить повёрнутые кусочки
+        if ($remainderHeight >= $pieceW) {
+            $colsInBottom = (int)floor($sheetW / $pieceH);
+            $rowsInBottom = (int)floor($remainderHeight / $pieceW);
+            $extraBottom = $colsInBottom * $rowsInBottom;
+        }
+
+        // Возвращаем лучший вариант: основные + справа ИЛИ основные + снизу
+        return max($mainCount + $extraRight, $mainCount + $extraBottom);
     }
 
     /**
@@ -516,21 +602,12 @@ class OzonProductCache
         }
 
         // 4. Вычисляем pieces_per_sheet если нашли размер
-        // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
-        // Максимальное количество кусочков — 10000 (защита от переполнения)
-        if ($result['width'] >= 50 && $result['height'] >= 50) {
-            // Вариант 1: стандартная ориентация
-            $piecesWidth1 = floor($baseWidth / $result['width']);
-            $piecesHeight1 = floor($baseHeight / $result['height']);
-            $total1 = max(1, $piecesWidth1) * max(1, $piecesHeight1);
-
-            // Вариант 2: повёрнутая ориентация (90°)
-            $piecesWidth2 = floor($baseWidth / $result['height']);
-            $piecesHeight2 = floor($baseHeight / $result['width']);
-            $total2 = max(1, $piecesWidth2) * max(1, $piecesHeight2);
-
-            // Выбираем лучший вариант (больше кусочков), но не больше 10000
-            $result['pieces_per_sheet'] = min(10000, max($total1, $total2));
+        // Используем улучшенный алгоритм с таблицей известных раскладок и комбинированной раскладкой
+        if ($result['width'] >= 50 && $result['height'] >= 50 && $result['width'] <= 10000 && $result['height'] <= 10000) {
+            $result['pieces_per_sheet'] = self::calculatePiecesPerSheet(
+                $baseWidth, $baseHeight,
+                $result['width'], $result['height']
+            );
         }
 
         return $result;

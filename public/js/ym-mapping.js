@@ -60,6 +60,13 @@ const YMMapping = {
     // Время последней синхронизации
     lastSyncTime: null,
 
+    // Сортировка таблицы сопоставлений
+    sortColumn: null,  // 'name', 'ym_name', 'offer_id'
+    sortDirection: 'asc',
+
+    // Выбранные сопоставления для массового удаления
+    selectedMappings: new Set(),
+
     /**
      * Инициализация модуля
      */
@@ -126,6 +133,26 @@ const YMMapping = {
         // === Шаг 3: Просмотр ===
         document.getElementById('backToStep2Btn')?.addEventListener('click', () => this.goToStep(2));
         document.getElementById('refreshMappingsBtn')?.addEventListener('click', () => this.loadMappings());
+
+        // Поиск по сопоставлениям
+        document.getElementById('searchMappings')?.addEventListener('input',
+            App.debounce(() => this.renderMappings(), 300));
+
+        // Сортировка по столбцам — делегирование событий на уровне таблицы
+        document.getElementById('mappingsTable')?.addEventListener('click', (e) => {
+            const th = e.target.closest('.sortable');
+            if (!th) return;
+            // Не реагируем на клик по resizer
+            if (e.target.classList.contains('column-resizer')) return;
+            const column = th.dataset.sort;
+            if (column) {
+                this.sortMappings(column);
+            }
+        });
+
+        // Кнопка массового удаления сопоставлений
+        document.getElementById('deleteSelectedMappingsBtn')?.addEventListener('click',
+            () => this.deleteSelectedMappings());
 
         // Редактирование сопоставления
         document.getElementById('saveMappingBtn')?.addEventListener('click', () => this.saveMappingEdit());
@@ -220,6 +247,33 @@ const YMMapping = {
      */
     async loadStep3Data() {
         await this.loadMappings();
+        this.initMappingsTableEvents();
+    },
+
+    /**
+     * Инициализация событий таблицы сопоставлений (после перехода к шагу 3)
+     */
+    initMappingsTableEvents() {
+        // Чекбокс "Выбрать все"
+        const selectAllCheckbox = document.getElementById('selectAllMappings');
+        if (selectAllCheckbox) {
+            // Удаляем старый обработчик через клонирование
+            const newSelectAll = selectAllCheckbox.cloneNode(true);
+            selectAllCheckbox.parentNode.replaceChild(newSelectAll, selectAllCheckbox);
+
+            newSelectAll.addEventListener('change', (e) => {
+                const checkboxes = document.querySelectorAll('.mapping-checkbox');
+                checkboxes.forEach(cb => {
+                    cb.checked = e.target.checked;
+                    if (e.target.checked) {
+                        this.selectedMappings.add(cb.value);
+                    } else {
+                        this.selectedMappings.delete(cb.value);
+                    }
+                });
+                this.updateMappingsSelectionUI();
+            });
+        }
     },
 
     /**
@@ -732,28 +786,69 @@ const YMMapping = {
         const tbody = document.getElementById('mappingsTableBody');
         if (!tbody) return;
 
-        document.getElementById('mappingsCount').textContent = this.mappings.length;
+        // Фильтрация по поиску
+        const searchTerm = (document.getElementById('searchMappings')?.value || '').toLowerCase();
+        let filtered = this.mappings;
 
-        if (this.mappings.length === 0) {
+        if (searchTerm) {
+            filtered = this.mappings.filter(m => {
+                return (m.product_name || m.name || '').toLowerCase().includes(searchTerm) ||
+                       (m.ym_name || '').toLowerCase().includes(searchTerm) ||
+                       (m.offer_id || '').toLowerCase().includes(searchTerm);
+            });
+        }
+
+        // Сортировка
+        if (this.sortColumn) {
+            filtered = [...filtered].sort((a, b) => {
+                let valA = (a[this.sortColumn] || '').toString().toLowerCase();
+                let valB = (b[this.sortColumn] || '').toString().toLowerCase();
+
+                if (valA < valB) return this.sortDirection === 'asc' ? -1 : 1;
+                if (valA > valB) return this.sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        // Обновляем счётчик (показываем отфильтрованное количество)
+        const countEl = document.getElementById('mappingsCount');
+        if (countEl) {
+            countEl.textContent = searchTerm
+                ? `${filtered.length} из ${this.mappings.length}`
+                : this.mappings.length;
+        }
+
+        // Обновляем визуальные индикаторы сортировки
+        this.updateSortIndicators();
+
+        // Очищаем выбранные при перерисовке
+        this.selectedMappings.clear();
+        this.updateMappingsSelectionUI();
+
+        if (filtered.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="text-center text-muted py-4">
+                    <td colspan="7" class="text-center text-muted py-4">
                         <i class="bi bi-link-45deg display-6"></i>
-                        <p class="mt-2 mb-0">Нет сопоставлений</p>
-                        <small>Перейдите на шаг 2 для создания сопоставлений</small>
+                        <p class="mt-2 mb-0">${searchTerm ? 'Ничего не найдено' : 'Нет сопоставлений'}</p>
+                        <small>${searchTerm ? 'Попробуйте изменить поисковый запрос' : 'Перейдите на шаг 2 для создания сопоставлений'}</small>
                     </td>
                 </tr>
             `;
             return;
         }
 
-        tbody.innerHTML = this.mappings.map(mapping => `
-            <tr data-id="${mapping.mapping_id}">
+        tbody.innerHTML = filtered.map(mapping => `
+            <tr data-id="${mapping.mapping_id || mapping.id}">
                 <td>
-                    <strong>${App.escapeHtml(mapping.name || '')}</strong>
-                    <br><small class="text-muted">${App.escapeHtml(mapping.sku || '')}</small>
+                    <input type="checkbox" class="form-check-input mapping-checkbox"
+                           value="${mapping.mapping_id || mapping.id}">
                 </td>
-                <td class="text-truncate" style="max-width: 250px;" title="${App.escapeHtml(mapping.ym_name || '')}">
+                <td>
+                    <strong>${App.escapeHtml(mapping.name || mapping.product_name || '')}</strong>
+                    <br><small class="text-muted">${App.escapeHtml(mapping.sku || mapping.product_sku || '')}</small>
+                </td>
+                <td class="text-truncate" title="${App.escapeHtml(mapping.ym_name || '')}">
                     ${App.escapeHtml(mapping.ym_name || '-')}
                 </td>
                 <td>
@@ -761,7 +856,7 @@ const YMMapping = {
                 </td>
                 <td class="text-center">
                     <button class="btn btn-sm btn-outline-secondary edit-mapping-btn"
-                            data-id="${mapping.mapping_id}"
+                            data-id="${mapping.mapping_id || mapping.id}"
                             data-qty="${mapping.quantity_in_pack || 1}"
                             data-pieces="${mapping.pieces_per_sheet || 1}">
                         ${mapping.quantity_in_pack || 1} шт.
@@ -769,7 +864,7 @@ const YMMapping = {
                 </td>
                 <td class="text-center">${mapping.pieces_per_sheet || 1}</td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger delete-mapping-btn" data-id="${mapping.mapping_id}" title="Удалить сопоставление">
+                    <button class="btn btn-sm btn-outline-danger delete-mapping-btn" data-id="${mapping.mapping_id || mapping.id}" title="Удалить сопоставление">
                         <i class="bi bi-trash"></i>
                     </button>
                 </td>
@@ -787,6 +882,161 @@ const YMMapping = {
                 btn.dataset.qty,
                 btn.dataset.pieces
             ));
+        });
+
+        // Чекбоксы выбора
+        tbody.querySelectorAll('.mapping-checkbox').forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (cb.checked) {
+                    this.selectedMappings.add(cb.value);
+                } else {
+                    this.selectedMappings.delete(cb.value);
+                }
+                this.updateMappingsSelectionUI();
+            });
+        });
+
+        // Инициализируем изменение ширины колонок
+        this.initColumnResizers();
+    },
+
+    /**
+     * Обновление UI выбора сопоставлений
+     */
+    updateMappingsSelectionUI() {
+        const count = this.selectedMappings.size;
+        const deleteSelectedBtn = document.getElementById('deleteSelectedMappingsBtn');
+
+        if (deleteSelectedBtn) {
+            deleteSelectedBtn.classList.toggle('d-none', count === 0);
+            const icon = deleteSelectedBtn.querySelector('i');
+            deleteSelectedBtn.innerHTML = icon ? icon.outerHTML + ` Удалить (${count})` : `Удалить (${count})`;
+        }
+
+        // Обновляем состояние "Выбрать все"
+        const selectAll = document.getElementById('selectAllMappings');
+        const allCheckboxes = document.querySelectorAll('.mapping-checkbox');
+        if (selectAll && allCheckboxes.length > 0) {
+            const checkedCount = document.querySelectorAll('.mapping-checkbox:checked').length;
+            selectAll.checked = checkedCount === allCheckboxes.length;
+            selectAll.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+        }
+    },
+
+    /**
+     * Массовое удаление выбранных сопоставлений
+     */
+    async deleteSelectedMappings() {
+        if (this.selectedMappings.size === 0) return;
+
+        const confirmed = confirm(`Удалить ${this.selectedMappings.size} сопоставлений?`);
+        if (!confirmed) return;
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const mappingId of this.selectedMappings) {
+            try {
+                await App.fetch('/api/yandex/mapping', {
+                    method: 'POST',
+                    body: {
+                        action: 'delete',
+                        mapping_id: parseInt(mappingId)
+                    }
+                });
+                successCount++;
+            } catch (error) {
+                console.error('[YMMapping] Delete error for', mappingId, error);
+                errorCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            App.showToast(`Удалено: ${successCount}`, 'success');
+        }
+        if (errorCount > 0) {
+            App.showToast(`Ошибок: ${errorCount}`, 'danger');
+        }
+
+        this.selectedMappings.clear();
+        await this.loadMappings();
+    },
+
+    /**
+     * Сортировка сопоставлений по столбцу
+     */
+    sortMappings(column) {
+        if (this.sortColumn === column) {
+            // Переключаем направление
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            // Новый столбец — сортируем по возрастанию
+            this.sortColumn = column;
+            this.sortDirection = 'asc';
+        }
+
+        this.renderMappings();
+    },
+
+    /**
+     * Обновление индикаторов сортировки в заголовках
+     */
+    updateSortIndicators() {
+        document.querySelectorAll('#mappingsTable .sortable').forEach(th => {
+            th.classList.remove('asc', 'desc');
+            const icon = th.querySelector('.sort-icon');
+            if (icon) {
+                icon.className = 'bi bi-arrow-down-up sort-icon';
+            }
+        });
+
+        if (this.sortColumn) {
+            const activeTh = document.querySelector(`#mappingsTable .sortable[data-sort="${this.sortColumn}"]`);
+            if (activeTh) {
+                activeTh.classList.add(this.sortDirection);
+                const icon = activeTh.querySelector('.sort-icon');
+                if (icon) {
+                    icon.className = this.sortDirection === 'asc'
+                        ? 'bi bi-sort-alpha-down sort-icon'
+                        : 'bi bi-sort-alpha-up sort-icon';
+                }
+            }
+        }
+    },
+
+    /**
+     * Инициализация изменения ширины колонок
+     */
+    initColumnResizers() {
+        const table = document.getElementById('mappingsTable');
+        if (!table) return;
+
+        const resizers = table.querySelectorAll('.column-resizer');
+
+        resizers.forEach(resizer => {
+            let startX, startWidth, th;
+
+            const onMouseMove = (e) => {
+                const diff = e.pageX - startX;
+                th.style.width = Math.max(50, startWidth + diff) + 'px';
+            };
+
+            const onMouseUp = () => {
+                resizer.classList.remove('resizing');
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                th = resizer.parentElement;
+                startX = e.pageX;
+                startWidth = th.offsetWidth;
+                resizer.classList.add('resizing');
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
         });
     },
 

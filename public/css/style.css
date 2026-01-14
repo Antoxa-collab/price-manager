@@ -155,6 +155,23 @@ body {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
+/* Стабилизация скроллбара - предотвращает подёргивание при hover */
+.table-responsive {
+    scrollbar-gutter: stable;
+}
+
+/* Фиксированная высота строк - предотвращает подёргивание */
+.table-dark tbody tr {
+    height: auto;
+    box-sizing: border-box;
+}
+
+.table-dark tbody tr td {
+    vertical-align: middle;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    /* НЕ анимируем padding, margin, height - это вызывает подёргивание */
+}
+
 /* ==================== Формы ==================== */
 
 .form-control,
@@ -684,6 +701,47 @@ body {
     letter-spacing: 0.5px;
 }
 
+/* ==================== Сортировка таблицы артикулов ==================== */
+
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 20px !important;
+    transition: background-color 0.2s ease;
+}
+
+th.sortable:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+th.sortable::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+    font-size: 12px;
+}
+
+th.sortable:hover::after {
+    content: '⇅';
+    opacity: 0.5;
+}
+
+th.sortable.sort-asc::after {
+    content: '▲';
+    opacity: 1;
+    color: #0d6efd;
+}
+
+th.sortable.sort-desc::after {
+    content: '▼';
+    opacity: 1;
+    color: #0d6efd;
+}
+
 /* === СТРОКИ — Мягкая зебра === */
 .ozon-calculator-table tbody tr,
 #articlesTableBody tr {
@@ -707,25 +765,22 @@ body {
     background: inherit !important;
 }
 
-/* === HOVER — Строка СВЕТЛЕЕ и заметнее === */
+/* === HOVER — Строка СВЕТЛЕЕ и заметнее (БЕЗ изменения размеров) === */
 .ozon-calculator-table tbody tr:hover,
 #articlesTableBody tr:hover {
     background: linear-gradient(90deg, #3d4f6f 0%, #4a5f7f 50%, #3d4f6f 100%) !important;
-    transform: scale(1.015);
+    /* НЕ используем transform: scale() - вызывает подёргивание */
     box-shadow:
-        0 8px 25px rgba(59, 130, 246, 0.4),
-        0 0 0 2px rgba(96, 165, 250, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    z-index: 100;
+        0 4px 12px rgba(59, 130, 246, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    z-index: 10;
     position: relative;
-    border-radius: 8px;
 }
 
-/* Ячейки при наведении — увеличенный отступ */
+/* Ячейки при наведении — БЕЗ изменения padding */
 .ozon-calculator-table tbody tr:hover td,
 #articlesTableBody tr:hover td {
-    padding-top: 14px !important;
-    padding-bottom: 14px !important;
+    /* НЕ меняем padding - вызывает подёргивание */
     color: #ffffff !important;
 }
 
@@ -1010,9 +1065,9 @@ body {
 }
 
 .table-hover-enhanced tbody tr:hover {
-    transform: scale(1.005);
+    /* НЕ используем transform: scale() - вызывает подёргивание */
     background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.06) 100%) !important;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3), 0 0 20px rgba(59, 130, 246, 0.15);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     z-index: 1;
     position: relative;
 }
@@ -1050,8 +1105,9 @@ body {
 }
 
 .list-group-item-hover-enhanced:hover {
-    transform: translateX(4px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), -3px 0 0 #3b82f6;
+    /* НЕ используем transform - вызывает подёргивание */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    border-left: 3px solid #3b82f6;
     background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%) !important;
 }
 
@@ -1064,9 +1120,9 @@ body {
 }
 
 #mappingsTableBody tr:hover {
-    transform: scale(1.003);
+    /* НЕ используем transform: scale() - вызывает подёргивание */
     background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.04) 100%) !important;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 #mappingsTableBody tr:hover .btn {
@@ -1138,28 +1194,85 @@ body {
 th.sortable {
     cursor: pointer;
     user-select: none;
-    transition: background-color 0.2s;
-    white-space: nowrap;
+    position: relative;
+    padding-right: 20px !important;
+    transition: background-color 0.2s ease;
 }
 
 th.sortable:hover {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
-th.sortable.sorted {
-    background-color: rgba(59, 130, 246, 0.2);
+th.sortable::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+    font-size: 12px;
 }
 
-th.sortable .sort-icon {
-    margin-left: 5px;
-    opacity: 0.4;
-    font-size: 0.85em;
+th.sortable:hover::after {
+    content: '⇅';
+    opacity: 0.5;
 }
 
-th.sortable:hover .sort-icon,
-th.sortable.sorted .sort-icon {
+th.sortable.sort-asc::after {
+    content: '▲';
     opacity: 1;
+    color: #0d6efd;
 }
+
+th.sortable.sort-desc::after {
+    content: '▼';
+    opacity: 1;
+    color: #0d6efd;
+}
+
+/* ==================== Изменяемая ширина колонок ==================== */
+
+#mappingsTable {
+    table-layout: fixed;
+    width: 100%;
+}
+
+#mappingsTable th,
+#mappingsTable td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#mappingsTable th {
+    position: relative;
+}
+
+/* Ресайзер колонок */
+.column-resizer {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 1;
+}
+
+.column-resizer:hover,
+.column-resizer.resizing {
+    background: rgba(255, 193, 7, 0.5);
+}
+
+/* Ширина колонок по умолчанию */
+#mappingsTable th:nth-child(1) { width: 40px; }  /* Чекбокс */
+#mappingsTable th:nth-child(2) { width: 18%; }  /* Наш товар */
+#mappingsTable th:nth-child(3) { width: 28%; }  /* Товар ЯМ */
+#mappingsTable th:nth-child(4) { width: 14%; }  /* OfferId */
+#mappingsTable th:nth-child(5) { width: 10%; }  /* Упаковка */
+#mappingsTable th:nth-child(6) { width: 10%; }  /* Раскрой */
+#mappingsTable th:nth-child(7) { width: auto; }  /* Действия */
 
 /* Поле поиска товаров */
 #productSearch {
@@ -1695,4 +1808,423 @@ tr.row-modified {
 /* Mapping actions центр */
 .mapping-actions {
     min-width: 120px;
+}
+/* ==================== Визуальный калькулятор раскроя ==================== */
+
+#vcSvgContainer {
+    background: linear-gradient(135deg, #2d2d3d 0%, #1a1a2e 100%);
+    border-radius: 8px;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+#vcSvgSheet {
+    max-width: 100%;
+    height: auto;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+/* Кнопки вариантов раскроя */
+#vcVariants button {
+    min-width: 130px;
+    transition: all 0.2s ease;
+}
+
+#vcVariants button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Плейсхолдер для калькулятора */
+#vcPlaceholder {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+}
+
+#vcPlaceholder i {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+/* Карточка с результатами */
+#vcResults .card-header {
+    background: linear-gradient(135deg, #198754 0%, #155724 100%) !important;
+}
+
+#vcResults .card-header.bg-info {
+    background: linear-gradient(135deg, #0dcaf0 0%, #0aa2c0 100%) !important;
+}
+
+/* Таблица результатов */
+#vcResults table td {
+    vertical-align: middle;
+    border-color: #3a3a4a;
+}
+
+#vcResults table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+#vcResults table tbody tr:hover {
+    background-color: #2d2d3d;
+}
+
+/* Адаптивность калькулятора */
+@media (max-width: 991px) {
+    #vcSvgContainer {
+        min-height: 350px !important;
+    }
+    
+    #vcResults {
+        margin-top: 2rem;
+    }
+    
+    #vcVariants button {
+        min-width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .col-md-3, .col-md-2, .col-md-5 {
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+    }
+    
+    #vcCalculateBtn, #vcRotateBtn {
+        width: 100%;
+    }
+    
+    #vcSvgContainer {
+        min-height: 300px !important;
+    }
+}
+
+/* ==================== Размерные линии ==================== */
+
+.dimension-line {
+    pointer-events: none;
+}
+
+.dimension-line line {
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.dimension-line polygon {
+    filter: drop-shadow(0 0.5px 1px rgba(0, 0, 0, 0.3));
+}
+
+.dimension-line text {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Интерактивные детали */
+.piece-item {
+    transition: all 0.2s ease;
+}
+
+.piece-item:hover {
+    cursor: pointer;
+    filter: brightness(1.1) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+.piece-item.selected {
+    stroke: #FFD700 !important;
+    stroke-width: 2.5 !important;
+    filter: drop-shadow(0 2px 6px rgba(255, 215, 0, 0.5));
+}
+
+/* Уведомления */
+.alert-info {
+    background-color: rgba(13, 202, 240, 0.1) !important;
+    border-color: #0dcaf0 !important;
+    color: #0dcaf0 !important;
+}
+
+.alert-info .btn-close {
+    filter: invert(1);
+    opacity: 0.8;
+}
+
+.alert-info .btn-close:hover {
+    opacity: 1;
+}
+
+/* ==================== Пропилы и остатки ==================== */
+
+.kerf-line {
+    stroke-linecap: round;
+}
+
+.waste-area {
+    cursor: help;
+}
+
+.waste-area:hover {
+    opacity: 0.5 !important;
+}
+
+/* Информационная панель размеров */
+#vcDimensionsPanel {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+#vcDimensionsPanel .card-header {
+    background: linear-gradient(135deg, #2c5f8d 0%, #1f4a6b 100%);
+    border-color: #0dcaf0 !important;
+}
+
+#vcDimensionsPanel .card-body {
+    background-color: #242424;
+}
+
+#vcDimensionsPanel .card-body hr {
+    border-color: #3a3a4a !important;
+}
+
+#vcDimensionsPanel ul {
+    list-style-position: inside;
+    padding-left: 0;
+}
+
+#vcDimensionsPanel li {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#vcDimensionsPanel li:last-child {
+    border-bottom: none;
+}
+
+/* Управление видом (кнопки zoom) */
+.btn-group .btn {
+    border-color: #0dcaf0 !important;
+    color: #0dcaf0 !important;
+}
+
+.btn-group .btn:hover {
+    background-color: rgba(13, 202, 240, 0.1);
+    border-color: #0dcaf0 !important;
+}
+
+.btn-group .btn:active,
+.btn-group .btn.active {
+    background-color: #0dcaf0 !important;
+    border-color: #0dcaf0 !important;
+    color: #1a1a2e !important;
+}
+
+/* SVG контейнер с прокруткой */
+#vcSvgContainer {
+    position: relative;
+    overflow: auto;
+    background: linear-gradient(135deg, #242424 0%, #2a2a3e 100%);
+}
+
+#vcSvgContainer::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+#vcSvgContainer::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+
+#vcSvgContainer::-webkit-scrollbar-thumb {
+    background: #0dcaf0;
+    border-radius: 4px;
+}
+
+#vcSvgContainer::-webkit-scrollbar-thumb:hover {
+    background: #0aa2c0;
+}
+
+/* ===== ЛОГОТИП РАСПИЛИМ - АНИМАЦИИ ===== */
+
+/**
+ * Эффект дыхания (пульсация) - плавное увеличение и уменьшение
+ */
+@keyframes breathing {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+/**
+ * Эффект блеска (shine sweep) - горизонтальная полоса света
+ * ВАЖНО: mix-blend-mode: overlay делает блеск видимым ТОЛЬКО на непрозрачных пикселях
+ */
+@keyframes shine-move {
+    0% {
+        left: -100%;
+    }
+    50%, 100% {
+        left: 150%;
+    }
+}
+
+@keyframes breathing {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.03);
+    }
+}
+
+/* Старая версия для fallback */
+@keyframes shine {
+    0% {
+        left: -100%;
+    }
+    40%, 100% {
+        left: 150%;
+    }
+}
+
+/* Увеличение логотипа в 2 раза и применение анимаций */
+.navbar-brand.logo-animated {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+    
+    /* Эффект дыхания */
+    animation: breathing 3s ease-in-out infinite;
+}
+
+/* Увеличить изображение логотипа в 2 раза */
+.navbar-brand.logo-animated img {
+    height: 64px !important;
+    width: auto;
+    display: block;
+    position: relative;
+    z-index: 2;
+}
+
+/**
+ * Эффект блеска - псевдоэлемент ::after
+ * 
+ * КЛЮЧЕВОЕ СВОЙСТВО: mask-image
+ * Это делает блеск видимым ТОЛЬКО поверх логотипа (по форме логотипа),
+ * а не поверх прозрачного фона. Блеск полностью повторяет контур логотипа.
+ */
+.navbar-brand.logo-animated::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        transparent 35%,
+        rgba(255, 255, 255, 0.8) 50%,
+        transparent 65%,
+        transparent 100%
+    );
+    
+    /* КЛЮЧЕВОЕ: маска по форме логотипа */
+    -webkit-mask-image: url('/images/logo.png');
+    mask-image: url('/images/logo.png');
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    
+    animation: shine-move 4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 10;
+    
+    /* Плавная работа на разных браузерах */
+    will-change: left;
+}
+
+/* Если mask-image не поддерживается - fallback на mix-blend-mode */
+@supports not (mask-image: url('')) {
+    .navbar-brand.logo-animated::after {
+        mix-blend-mode: overlay;
+        transform: skewX(-25deg);
+        animation: shine 5s ease-in-out 0.5s infinite;
+    }
+}
+
+/* Поддержка для текстовых логотипов */
+.navbar-brand.logo-animated {
+    text-shadow: 0 0 10px rgba(13, 202, 240, 0.2);
+}
+
+/* Адаптивность для мобильных */
+@media (max-width: 768px) {
+    #vcDimensionsPanel .card-body {
+        padding: 0.75rem !important;
+    }
+    
+    #vcDimensionsPanel .fs-6 {
+        font-size: 0.9rem !important;
+    }
+    
+    .btn-group .btn {
+        padding: 0.35rem 0.5rem !important;
+        font-size: 0.8rem !important;
+    }
+    
+    .btn-group .btn i {
+        margin-right: 0 !important;
+    }
+    
+    /* Для мобильных - уменьшить анимацию логотипа */
+    .navbar-brand.logo-animated {
+        animation: breathing 3s ease-in-out infinite;
+    }
+
+    .navbar-brand.logo-animated img {
+        height: 48px !important;
+        width: auto;
+    }
+}
+
+/* ==================== Индикатор деплоя ==================== */
+
+.deploy-info {
+    font-size: 0.8rem;
+    color: #8b949e;
+    cursor: help;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    transition: background 0.2s, color 0.2s;
+}
+
+.deploy-info:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #c9d1d9;
+}
+
+.deploy-icon {
+    margin-right: 6px;
+}
+
+.deploy-time {
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* Анимация при обновлении */
+.deploy-info.updated {
+    animation: deployPulse 0.5s ease;
+}
+
+@keyframes deployPulse {
+    0% { background: rgba(46, 160, 67, 0.3); }
+    100% { background: rgba(255, 255, 255, 0.05); }
 }

@@ -111,6 +111,10 @@
                 <i class="bi bi-bug"></i>
                 <span>Логи ошибок</span>
             </a>
+            <a class="nav-link <?= isActive('/system/logs') || isActive('/diagnostics') ?>" href="/system/logs">
+                <i class="bi bi-activity"></i>
+                <span>Диагностика</span>
+            </a>
             <?php endif; ?>
 
             <hr class="my-2 border-secondary">

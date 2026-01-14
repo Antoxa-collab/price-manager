@@ -230,6 +230,10 @@ include VIEWS_PATH . '/layout/header.php';
                 <span class="badge bg-success ms-2" id="mappingsCount">0</span>
             </div>
             <div>
+                <button type="button" class="btn btn-danger btn-sm d-none me-2" id="deleteSelectedMappingsBtn">
+                    <i class="bi bi-trash me-1"></i>
+                    Удалить выбранные
+                </button>
                 <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="backToStep2Btn">
                     <i class="bi bi-arrow-left me-1"></i>
                     Добавить ещё
@@ -241,21 +245,39 @@ include VIEWS_PATH . '/layout/header.php';
             </div>
         </div>
         <div class="card-body p-0">
+            <!-- Поиск по сопоставлениям -->
+            <div class="p-3 border-bottom border-secondary">
+                <input type="text" class="form-control bg-dark text-white border-secondary"
+                       id="searchMappings"
+                       placeholder="Поиск по названию, товару ЯМ, OfferId...">
+            </div>
             <div class="table-responsive">
                 <table class="table table-dark table-striped table-hover mb-0" id="mappingsTable">
                     <thead>
                         <tr>
-                            <th>Наш товар</th>
-                            <th>Товар ЯМ</th>
-                            <th>OfferId</th>
-                            <th>Упаковка</th>
-                            <th>Раскрой</th>
+                            <th style="width: 40px;">
+                                <input type="checkbox" class="form-check-input" id="selectAllMappings" title="Выбрать все">
+                            </th>
+                            <th class="sortable" data-sort="name">
+                                Наш товар <i class="bi bi-arrow-down-up sort-icon"></i>
+                                <div class="column-resizer"></div>
+                            </th>
+                            <th class="sortable" data-sort="ym_name">
+                                Товар ЯМ <i class="bi bi-arrow-down-up sort-icon"></i>
+                                <div class="column-resizer"></div>
+                            </th>
+                            <th class="sortable" data-sort="offer_id">
+                                OfferId <i class="bi bi-arrow-down-up sort-icon"></i>
+                                <div class="column-resizer"></div>
+                            </th>
+                            <th>Упаковка<div class="column-resizer"></div></th>
+                            <th>Раскрой<div class="column-resizer"></div></th>
                             <th class="text-end">Действия</th>
                         </tr>
                     </thead>
                     <tbody id="mappingsTableBody">
                         <tr>
-                            <td colspan="6" class="text-center text-muted py-4">
+                            <td colspan="7" class="text-center text-muted py-4">
                                 <i class="bi bi-hourglass-split"></i> Загрузка...
                             </td>
                         </tr>

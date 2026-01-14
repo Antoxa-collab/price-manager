@@ -815,6 +815,48 @@ class YandexMarketAPI
         return $this->updateStocks($skus);
     }
 
+    /**
+     * Обновление остатков с явным указанием склада
+     *
+     * @param array $items Массив [['offer_id' => 'SKU', 'stock' => 10], ...]
+     * @param int $warehouseId ID склада
+     * @return array
+     */
+    public function uploadStocksWithWarehouse(array $items, int $warehouseId): array
+    {
+        if (empty($warehouseId)) {
+            return ['success' => false, 'error' => 'Warehouse ID не указан'];
+        }
+
+        $skus = [];
+        $now = date('c'); // ISO 8601 формат
+
+        foreach ($items as $item) {
+            $offerId = $item['offer_id'] ?? '';
+            if (empty($offerId)) continue;
+
+            $skus[] = [
+                'sku' => $offerId,
+                'warehouseId' => $warehouseId,
+                'items' => [
+                    [
+                        'count' => max(0, (int)($item['stock'] ?? 0)),
+                        'type' => 'FIT',
+                        'updatedAt' => $now
+                    ]
+                ]
+            ];
+        }
+
+        if (empty($skus)) {
+            return ['success' => false, 'error' => 'Нет валидных товаров'];
+        }
+
+        error_log("[YM API] uploadStocksWithWarehouse: " . count($skus) . " SKU на склад " . $warehouseId);
+
+        return $this->updateStocks($skus);
+    }
+
     // ==================== МЕТОДЫ API: ТАРИФЫ ====================
 
     /**

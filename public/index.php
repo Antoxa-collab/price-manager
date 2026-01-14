@@ -66,9 +66,16 @@ try {
                     $password = post('password', '');
 
                     if ($auth->login($username, $password)) {
+                        SystemLogger::auth('Успешный вход в систему', [
+                            'username' => $username,
+                            'user_id' => $_SESSION['user_id'] ?? null
+                        ], SystemLogger::OK);
                         setFlash('success', 'Добро пожаловать!');
                         redirect('/');
                     } else {
+                        SystemLogger::auth('Неудачная попытка входа', [
+                            'username' => $username
+                        ], SystemLogger::WARN);
                         $error = 'Неверный логин или пароль';
                     }
                 }
@@ -79,6 +86,8 @@ try {
 
         // Выход
         case '/logout':
+            $userId = $_SESSION['user_id'] ?? null;
+            SystemLogger::auth('Выход из системы', ['user_id' => $userId], SystemLogger::INFO);
             $auth->logout();
             setFlash('info', 'Вы вышли из системы');
             redirect('/login');
@@ -140,7 +149,56 @@ try {
             view('logs/index', ['auth' => $auth]);
             break;
 
+        // Системные логи - современная страница диагностики
+        case '/system/logs':
+        case '/diagnostics':
+            $auth->requireLogin();
+            view('system/logs', ['auth' => $auth]);
+            break;
+
         // ==================== API Endpoints ====================
+
+        // Информация о деплое (время последнего изменения ключевых файлов)
+        case '/api/deploy-info':
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-cache, no-store, must-revalidate');
+            header('Pragma: no-cache');
+            header('Expires: 0');
+
+            // Очищаем кэш stat для получения актуального времени
+            clearstatcache();
+
+            // Проверяем несколько ключевых файлов - берём самый свежий
+            $files = [
+                __FILE__,
+                __DIR__ . '/js/app.js',
+                __DIR__ . '/js/ozon-calculator.js',
+                __DIR__ . '/js/wb-calculator.js',
+                __DIR__ . '/js/ym-calculator.js',
+                __DIR__ . '/css/style.css'
+            ];
+
+            $deployTime = 0;
+            $latestFile = 'unknown';
+
+            foreach ($files as $file) {
+                if (file_exists($file)) {
+                    $mtime = filemtime($file);
+                    if ($mtime > $deployTime) {
+                        $deployTime = $mtime;
+                        $latestFile = basename($file);
+                    }
+                }
+            }
+
+            echo json_encode([
+                'success' => true,
+                'deploy_time' => $deployTime,
+                'deploy_formatted' => date('d.m.Y H:i:s', $deployTime),
+                'deploy_short' => date('d.m.Y H:i', $deployTime),
+                'file' => $latestFile
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
 
         // Расчёт цен
         case '/api/calculate':
@@ -1004,6 +1062,73 @@ try {
                 'message' => 'Товар добавлен',
                 'product_id' => $productId
             ]);
+            break;
+
+        // Массовое обновление минимальных цен для артикулов Ozon
+        case '/api/ozon/bulk-update-min-prices':
+            $auth->requireLogin();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            try {
+                $userId = $auth->getUserId();
+                $minThreshold = (float)post('min_threshold', 0);
+                $articleUpdates = post('articles'); // JSON строка с массивом [{offer_id, min_price}]
+
+                error_log("[bulk-update-min-prices] User: {$userId}, Threshold: {$minThreshold}");
+                error_log("[bulk-update-min-prices] Articles raw: " . mb_substr($articleUpdates ?? '', 0, 500));
+
+                if ($minThreshold <= 0 && empty($articleUpdates)) {
+                    jsonResponse(['success' => false, 'message' => 'Укажите порог или список артикулов']);
+                }
+
+                $db = Database::getInstance();
+                $updated = 0;
+
+                // Если передан массив конкретных артикулов
+                if (!empty($articleUpdates)) {
+                    $articles = json_decode($articleUpdates, true);
+                    error_log("[bulk-update-min-prices] Parsed articles count: " . (is_array($articles) ? count($articles) : 'invalid'));
+
+                    if (is_array($articles)) {
+                        foreach ($articles as $article) {
+                            $offerId = $article['offer_id'] ?? '';
+                            $minPrice = (float)($article['min_price'] ?? 0);
+
+                            if (!empty($offerId) && $minPrice > 0) {
+                                // Правильные имена колонок: marketplace_offer_id, custom_min_price
+                                $rowsAffected = $db->execute(
+                                    "UPDATE product_mappings
+                                     SET custom_min_price = ?, is_min_price_edited = 1
+                                     WHERE marketplace_offer_id = ?
+                                       AND marketplace = 'ozon'
+                                       AND user_id = ?",
+                                    [$minPrice, $offerId, $userId]
+                                );
+
+                                if ($rowsAffected > 0) {
+                                    $updated++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                error_log("[bulk-update-min-prices] Updated: {$updated}");
+
+                jsonResponse([
+                    'success' => true,
+                    'message' => "Поднято {$updated} артикулов до {$minThreshold}₽",
+                    'updated' => $updated
+                ], JSON_UNESCAPED_UNICODE);
+
+            } catch (Exception $e) {
+                error_log("[bulk-update-min-prices] ERROR: " . $e->getMessage());
+                error_log("[bulk-update-min-prices] Trace: " . $e->getTraceAsString());
+                jsonResponse(['success' => false, 'message' => 'Ошибка: ' . $e->getMessage()], 500);
+            }
             break;
 
         // ==================== Cutting Reference API ====================
@@ -2160,6 +2285,7 @@ try {
         // Загрузка цен на Ozon (устаревший endpoint, оставлен для совместимости)
         case '/api/ozon/upload-prices':
             $auth->requireLogin();
+            $startTime = microtime(true);
 
             if (!isMethod('POST')) {
                 jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
@@ -2174,15 +2300,19 @@ try {
                 jsonResponse(['success' => false, 'message' => 'Нет товаров для загрузки']);
             }
 
+            SystemLogger::ozonApi('Загрузка цен на Ozon', ['count' => count($products)]);
+
             $ozonApi = new OzonAPI($auth->getUserId());
 
             if (!$ozonApi->isConfigured()) {
+                SystemLogger::error(SystemLogger::OZON_API, 'API Ozon не настроен');
                 jsonResponse(['success' => false, 'message' => 'API Ozon не настроен']);
             }
 
             // Проверяем подключение к Ozon
             $testResult = $ozonApi->testConnection();
             if (!$testResult['success']) {
+                SystemLogger::error(SystemLogger::OZON_API, 'Нет подключения к Ozon', ['error' => $testResult['message'] ?? '']);
                 jsonResponse([
                     'success' => false,
                     'message' => 'Нет подключения к Ozon: ' . ($testResult['message'] ?? 'Неизвестная ошибка')
@@ -2190,6 +2320,18 @@ try {
             }
 
             $result = $ozonApi->updatePricesWithMinPrice($products);
+            $durationMs = (int)((microtime(true) - $startTime) * 1000);
+
+            if ($result['success']) {
+                SystemLogger::ok(SystemLogger::OZON_API, 'Цены загружены на Ozon', [
+                    'count' => $result['success_count'] ?? count($products)
+                ], $durationMs);
+            } else {
+                SystemLogger::error(SystemLogger::OZON_API, 'Ошибка загрузки цен на Ozon', [
+                    'error' => $result['message'] ?? ''
+                ]);
+            }
+
             jsonResponse($result);
             break;
 
@@ -3906,15 +4048,34 @@ try {
             $prices = $input['prices'] ?? [];
 
             if (empty($prices)) {
+                SystemLogger::wbApi('Пустой массив цен при загрузке', [], SystemLogger::WARN);
                 jsonResponse(['success' => false, 'error' => 'Пустой массив цен'], 400);
                 break;
             }
 
+            $startTime = microtime(true);
+            SystemLogger::wbApi('Начало загрузки цен на WB', [
+                'count' => count($prices),
+                'user_id' => $auth->getUserId()
+            ]);
+
             try {
                 $wbApi = new WildberriesAPI($auth->getUserId());
                 $result = $wbApi->uploadPrices($prices);
+
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::ok(SystemLogger::WB_API, 'Цены успешно загружены на WB', [
+                    'count' => count($prices),
+                    'result' => $result['success'] ?? false
+                ], $durationMs);
+
                 jsonResponse($result);
             } catch (Exception $e) {
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::error(SystemLogger::WB_API, 'Ошибка загрузки цен на WB', [
+                    'error' => $e->getMessage(),
+                    'count' => count($prices)
+                ]);
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
@@ -3927,17 +4088,24 @@ try {
             $warehouseId = (int)($input['warehouse_id'] ?? 0);
             $stocks = $input['stocks'] ?? [];
 
-            error_log("[upload-stocks] Получен запрос: warehouse_id=$warehouseId, stocks=" . count($stocks));
-
             if (!$warehouseId) {
+                SystemLogger::wbApi('Не указан склад для загрузки остатков', [], SystemLogger::WARN);
                 jsonResponse(['success' => false, 'error' => 'Не указан склад'], 400);
                 break;
             }
 
             if (empty($stocks)) {
+                SystemLogger::wbApi('Пустой массив остатков', [], SystemLogger::WARN);
                 jsonResponse(['success' => false, 'error' => 'Не указаны остатки'], 400);
                 break;
             }
+
+            $startTimeWbStocks = microtime(true);
+            SystemLogger::wbApi('Начало загрузки остатков на WB', [
+                'count' => count($stocks),
+                'warehouse_id' => $warehouseId,
+                'user_id' => $auth->getUserId()
+            ]);
 
             try {
                 $wbApi = new WildberriesAPI($auth->getUserId());
@@ -4053,9 +4221,21 @@ try {
                 }
                 $result['processed'] = count($validStocks);
 
+                $durationMsWbStocks = (int)((microtime(true) - $startTimeWbStocks) * 1000);
+                SystemLogger::ok(SystemLogger::WB_API, 'Остатки успешно загружены на WB', [
+                    'processed' => count($validStocks),
+                    'warehouse_id' => $warehouseId,
+                    'warnings_count' => count($errors)
+                ], $durationMsWbStocks);
+
                 jsonResponse($result);
             } catch (Exception $e) {
-                error_log("[upload-stocks] ОШИБКА: " . $e->getMessage());
+                $durationMsWbStocks = (int)((microtime(true) - $startTimeWbStocks) * 1000);
+                SystemLogger::error(SystemLogger::WB_API, 'Ошибка загрузки остатков на WB', [
+                    'error' => $e->getMessage(),
+                    'warehouse_id' => $warehouseId,
+                    'count' => count($stocks)
+                ]);
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
@@ -4753,38 +4933,87 @@ try {
             break;
 
         // Получение товаров с сопоставлениями для калькулятора
+        // Получение НАШИХ товаров с сопоставлениями (для калькулятора ЯМ)
         case '/api/yandex/products-with-mappings':
             $auth->requireLogin();
-
             try {
-                error_log("[YM] products-with-mappings: creating cache for user " . $auth->getUserId());
-                $cache = new YMProductCache($auth->getUserId());
-                error_log("[YM] products-with-mappings: calling getMappedProducts()");
-                $products = $cache->getMappedProducts();
-                error_log("[YM] products-with-mappings: got " . count($products) . " products");
+                // Используем тот же метод что и WB — Calculator::getProductsWithMappings()
+                // Он возвращает id, name, cost_price, mapping_count — именно то, что ожидает JS
+                $calculator = new Calculator();
+                $products = $calculator->getProductsWithMappings('yandex');
 
                 jsonResponse(['success' => true, 'products' => $products]);
             } catch (Exception $e) {
-                error_log("[YM] products-with-mappings ERROR: " . $e->getMessage() . "\n" . $e->getTraceAsString());
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
 
-        // Получение артикулов по товару
+        // Получение артикулов ЯМ для товара (для калькулятора)
         case '/api/yandex/product-articles':
             $auth->requireLogin();
-
-            $productId = (int)get('product_id', 0);
-
-            if ($productId <= 0) {
-                jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
-            }
-
             try {
-                $cache = new YMProductCache($auth->getUserId());
-                $articles = $cache->getProductArticles($productId);
+                $productId = (int)get('product_id', 0);
 
-                jsonResponse(['success' => true, 'articles' => $articles]);
+                if ($productId <= 0) {
+                    jsonResponse(['success' => false, 'message' => 'Укажите product_id']);
+                }
+
+                $mapping = new ProductMapping();
+                $mappings = $mapping->getByProduct($productId, 'yandex');
+
+                // Дополняем данными из кэша ЯМ
+                $cache = new YMProductCache($auth->getUserId());
+                $articles = [];
+
+                foreach ($mappings as $m) {
+                    $offerId = $m['marketplace_sku'] ?? $m['marketplace_offer_id'] ?? '';
+                    $ymProduct = $cache->getByOfferId($offerId);
+
+                    $ymName = $ymProduct['name'] ?? $m['marketplace_name'] ?? '';
+
+                    // Получаем pieces_per_sheet из БД
+                    $piecesPerSheet = (int)($m['pieces_per_sheet'] ?? 1);
+                    $quantityInPack = (int)($m['quantity_in_pack'] ?? 1);
+
+                    // Если pieces_per_sheet = 1 (по умолчанию) — пробуем рассчитать динамически
+                    if ($piecesPerSheet === 1) {
+                        $parsed = YMProductCache::parseArticleName($offerId, $ymName, 1520, 1520);
+                        if ($parsed['pieces_per_sheet'] > 1) {
+                            $piecesPerSheet = $parsed['pieces_per_sheet'];
+                        }
+                        if ($quantityInPack === 1 && $parsed['quantity'] > 1) {
+                            $quantityInPack = $parsed['quantity'];
+                        }
+                    }
+
+                    // Рассчитываем is_oversized на основе размеров
+                    $dimensions = YMProductCache::parseDimensions($offerId, $ymName);
+                    $isOversized = $dimensions['is_oversized'] ?? false;
+
+                    // Используем кэшированные значения если есть
+                    $cachedPrice = $m['cached_price'] ?? null;
+                    $cachedStock = $m['cached_stock'] ?? null;
+
+                    $articles[] = [
+                        'mapping_id' => $m['mapping_id'],
+                        'offer_id' => $offerId,
+                        'shop_sku' => $ymProduct['shop_sku'] ?? $offerId,
+                        'barcode' => $ymProduct['barcode'] ?? null,
+                        'ym_name' => $ymName,
+                        'ym_price' => $ymProduct['price'] ?? 0,
+                        'pieces_per_sheet' => $piecesPerSheet,
+                        'quantity_in_pack' => $quantityInPack,
+                        'cost_price' => $m['cost_price'] ?? 0,
+                        'stock' => $cachedStock ?? ($ymProduct['stock'] ?? 0),
+                        'cached_price' => $cachedPrice,
+                        'cached_stock' => $cachedStock,
+                        'custom_discount' => $m['custom_discount'] ?? null,
+                        'is_discount_edited' => (bool)($m['is_discount_edited'] ?? false),
+                        'is_oversized' => $isOversized
+                    ];
+                }
+
+                jsonResponse(['success' => true, 'mappings' => $articles]);
             } catch (Exception $e) {
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
@@ -4827,6 +5056,29 @@ try {
 
                     $result = $cache->updateMappingPack($mappingId, $quantityInPack, $piecesPerSheet);
                     jsonResponse($result);
+                }
+
+                if ($action === 'delete') {
+                    $mappingId = (int)($input['mapping_id'] ?? post('mapping_id', 0));
+
+                    if (!$mappingId) {
+                        jsonResponse(['success' => false, 'message' => 'Укажите mapping_id']);
+                    }
+
+                    $result = $cache->deleteMapping($mappingId);
+                    jsonResponse($result);
+                }
+
+                if ($action === 'save_markups') {
+                    $productId = (int)($input['product_id'] ?? 0);
+                    $markups = $input['markups'] ?? [];
+
+                    if (!$productId) {
+                        jsonResponse(['success' => false, 'message' => 'product_id не указан']);
+                    }
+
+                    $saved = $cache->saveArticleSettings($productId, $markups);
+                    jsonResponse(['success' => true, 'saved' => $saved]);
                 }
             }
 
@@ -4976,43 +5228,79 @@ try {
             }
 
             $input = json_decode(file_get_contents('php://input'), true);
-            $items = $input['items'] ?? [];
+            // JS отправляет { prices: [...] }, принимаем оба варианта для совместимости
+            $items = $input['prices'] ?? $input['items'] ?? [];
 
             if (empty($items)) {
+                SystemLogger::ymApi('Нет товаров для загрузки цен', [], SystemLogger::WARN);
                 jsonResponse(['success' => false, 'message' => 'Нет товаров для загрузки']);
             }
+
+            $startTime = microtime(true);
+            SystemLogger::ymApi('Начало загрузки цен на ЯМ', [
+                'count' => count($items),
+                'user_id' => $auth->getUserId()
+            ]);
 
             try {
                 $ymApi = new YandexMarketAPI($auth->getUserId());
 
                 if (!$ymApi->isConfigured()) {
+                    SystemLogger::ymApi('API не настроен', [], SystemLogger::ERROR);
                     jsonResponse(['success' => false, 'message' => 'API не настроен']);
                 }
 
                 // Формируем массив для API ЯМ
+                // JS отправляет: { offerId, price, discountBase }
+                // API ЯМ ожидает: { offerId, price: { value, currencyId, discountBase? } }
                 $offers = [];
                 foreach ($items as $item) {
+                    $offerId = $item['offerId'] ?? $item['offer_id'] ?? null;
+                    $price = (float)($item['price'] ?? 0);
+                    $discountBase = (float)($item['discountBase'] ?? 0);
+
+                    if (!$offerId || $price <= 0) {
+                        continue;
+                    }
+
                     $offer = [
-                        'offerId' => $item['offer_id'],
+                        'offerId' => $offerId,
                         'price' => [
-                            'value' => (float)$item['price'],
+                            'value' => $price,
                             'currencyId' => 'RUR'
                         ]
                     ];
 
-                    // Зачёркнутая цена (если есть и больше основной)
-                    if (!empty($item['old_price']) && $item['old_price'] > $item['price']) {
-                        $offer['price']['discountBase'] = (float)$item['old_price'];
+                    // Если передан discountBase (зачёркнутая цена) — добавляем
+                    // price.value = реальная цена, price.discountBase = зачёркнутая (визуальная скидка)
+                    if ($discountBase > 0 && $discountBase > $price) {
+                        $offer['price']['discountBase'] = (int)$discountBase;
                     }
 
                     $offers[] = $offer;
                 }
 
+                if (empty($offers)) {
+                    SystemLogger::ymApi('Нет валидных товаров для загрузки', ['input_count' => count($items)], SystemLogger::WARN);
+                    jsonResponse(['success' => false, 'message' => 'Нет валидных товаров для загрузки']);
+                }
+
                 $result = $ymApi->uploadPrices($offers);
+
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::ok(SystemLogger::YM_API, 'Цены успешно загружены на ЯМ', [
+                    'count' => count($offers),
+                    'result' => $result['success'] ?? false
+                ], $durationMs);
+
                 jsonResponse($result);
 
             } catch (Exception $e) {
-                ErrorLogger::error('YM upload prices failed', ['error' => $e->getMessage()]);
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::error(SystemLogger::YM_API, 'Ошибка загрузки цен на ЯМ', [
+                    'error' => $e->getMessage(),
+                    'count' => count($items)
+                ]);
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
@@ -5026,24 +5314,76 @@ try {
             }
 
             $input = json_decode(file_get_contents('php://input'), true);
-            $items = $input['items'] ?? [];
+            // JS отправляет { stocks: [...], warehouse_id: ... }
+            $rawItems = $input['stocks'] ?? $input['items'] ?? [];
+            $warehouseId = $input['warehouse_id'] ?? null;
 
-            if (empty($items)) {
+            if (empty($rawItems)) {
+                SystemLogger::ymApi('Нет товаров для загрузки остатков', [], SystemLogger::WARN);
                 jsonResponse(['success' => false, 'message' => 'Нет товаров для загрузки']);
             }
+
+            if (empty($warehouseId)) {
+                SystemLogger::ymApi('Не указан ID склада', [], SystemLogger::WARN);
+                jsonResponse(['success' => false, 'message' => 'Не указан ID склада']);
+            }
+
+            $startTime = microtime(true);
+            SystemLogger::ymApi('Начало загрузки остатков на ЯМ', [
+                'count' => count($rawItems),
+                'warehouse_id' => $warehouseId,
+                'user_id' => $auth->getUserId()
+            ]);
 
             try {
                 $ymApi = new YandexMarketAPI($auth->getUserId());
 
                 if (!$ymApi->isConfigured()) {
+                    SystemLogger::ymApi('API не настроен', [], SystemLogger::ERROR);
                     jsonResponse(['success' => false, 'message' => 'API не настроен']);
                 }
 
-                $result = $ymApi->uploadStocks($items);
+                // Преобразуем формат JS → формат для uploadStocks
+                // JS отправляет: { sku, offer_id, amount }
+                // uploadStocks ожидает: { offer_id, stock }
+                $items = [];
+                foreach ($rawItems as $item) {
+                    $offerId = $item['offer_id'] ?? $item['sku'] ?? '';
+                    $stock = (int)($item['amount'] ?? $item['stock'] ?? $item['count'] ?? 0);
+
+                    if (empty($offerId)) {
+                        continue;
+                    }
+
+                    $items[] = [
+                        'offer_id' => $offerId,
+                        'stock' => $stock
+                    ];
+                }
+
+                if (empty($items)) {
+                    SystemLogger::ymApi('Нет валидных товаров для загрузки', ['input_count' => count($rawItems)], SystemLogger::WARN);
+                    jsonResponse(['success' => false, 'message' => 'Нет валидных товаров для загрузки']);
+                }
+
+                $result = $ymApi->uploadStocksWithWarehouse($items, (int)$warehouseId);
+
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::ok(SystemLogger::YM_API, 'Остатки успешно загружены на ЯМ', [
+                    'count' => count($items),
+                    'warehouse_id' => $warehouseId,
+                    'result' => $result['success'] ?? false
+                ], $durationMs);
+
                 jsonResponse($result);
 
             } catch (Exception $e) {
-                ErrorLogger::error('YM upload stocks failed', ['error' => $e->getMessage()]);
+                $durationMs = (int)((microtime(true) - $startTime) * 1000);
+                SystemLogger::error(SystemLogger::YM_API, 'Ошибка загрузки остатков на ЯМ', [
+                    'error' => $e->getMessage(),
+                    'count' => count($rawItems),
+                    'warehouse_id' => $warehouseId
+                ]);
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
             break;
@@ -5066,6 +5406,337 @@ try {
             } catch (Exception $e) {
                 jsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
             }
+            break;
+
+        // ==================== API: Справочник раскроя ====================
+
+        // Сохранить справочник раскроя
+        case '/api/cutting-reference/save':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            $sheetName = trim($input['sheet_name'] ?? '');
+            $sheetWidth = (int)($input['sheet_width'] ?? 0);
+            $sheetHeight = (int)($input['sheet_height'] ?? 0);
+            $items = $input['items'] ?? [];
+
+            error_log("[cutting-reference/save] Input: user=$userId, sheet=$sheetName, items=" . count($items));
+
+            if (!$sheetName || empty($items)) {
+                jsonResponse(['success' => false, 'message' => 'Не указан лист или данные']);
+                break;
+            }
+
+            try {
+                $db = Database::getInstance();
+                
+                // Автоматически создать таблицу если не существует
+                $db->execute("CREATE TABLE IF NOT EXISTS cutting_reference (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    sheet_name VARCHAR(100) NOT NULL,
+                    sheet_width INT NOT NULL DEFAULT 1400,
+                    sheet_height INT NOT NULL DEFAULT 1030,
+                    piece_width INT NOT NULL,
+                    piece_height INT NOT NULL,
+                    pieces_count INT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_user_sheet_piece (user_id, sheet_name, piece_width, piece_height),
+                    INDEX idx_user_sheet (user_id, sheet_name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+                
+                $saved = 0;
+
+                foreach ($items as $item) {
+                    $pieceWidth = (int)($item['piece_width'] ?? 0);
+                    $pieceHeight = (int)($item['piece_height'] ?? 0);
+                    $piecesCount = (int)($item['pieces_count'] ?? 0);
+
+                    if ($pieceWidth > 0 && $pieceHeight > 0 && $piecesCount > 0) {
+                        // UPSERT: вставить или обновить
+                        $sql = "INSERT INTO cutting_reference 
+                                (user_id, sheet_name, sheet_width, sheet_height, piece_width, piece_height, pieces_count)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE 
+                                pieces_count = VALUES(pieces_count),
+                                updated_at = NOW()";
+
+                        $db->execute($sql, [
+                            $userId, $sheetName, $sheetWidth, $sheetHeight,
+                            $pieceWidth, $pieceHeight, $piecesCount
+                        ]);
+                        $saved++;
+                        error_log("[cutting-reference/save] Saved: {$pieceWidth}x{$pieceHeight} = {$piecesCount}");
+                    }
+                }
+
+                error_log("[cutting-reference/save] OK: saved $saved records");
+                jsonResponse(['success' => true, 'saved' => $saved]);
+            } catch (Exception $e) {
+                error_log("[cutting-reference/save] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка при сохранении: ' . $e->getMessage()], 500);
+            }
+            break;
+
+        // Загрузить справочник раскроя
+        case '/api/cutting-reference/load':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('GET')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $sheetName = trim(get('sheet_name') ?? '');
+
+            error_log("[cutting-reference/load] Request: user=$userId, sheet=$sheetName");
+
+            if (!$sheetName) {
+                jsonResponse(['success' => false, 'message' => 'Не указан лист']);
+                break;
+            }
+
+            try {
+                $db = Database::getInstance();
+                
+                // Проверить существование таблицы
+                $tableExists = $db->fetchOne("SELECT COUNT(*) as cnt FROM information_schema.tables 
+                    WHERE table_schema = DATABASE() AND table_name = 'cutting_reference'");
+                
+                if (!$tableExists || $tableExists['cnt'] == 0) {
+                    // Таблица не существует - вернуть пустой справочник
+                    error_log("[cutting-reference/load] Table does not exist, returning empty");
+                    jsonResponse(['success' => true, 'reference' => (object)[], 'count' => 0]);
+                    break;
+                }
+                
+                $sql = "SELECT piece_width, piece_height, pieces_count 
+                        FROM cutting_reference 
+                        WHERE user_id = ? AND sheet_name = ?
+                        ORDER BY piece_width, piece_height";
+
+                $items = $db->fetchAll($sql, [$userId, $sheetName]);
+
+                // Преобразовать в формат справочника {ширина x высота: количество}
+                $reference = [];
+                foreach ($items as $item) {
+                    $key = $item['piece_width'] . 'x' . $item['piece_height'];
+                    $reference[$key] = (int)$item['pieces_count'];
+                    // Добавить обратный ключ (высота x ширина)
+                    $keyRev = $item['piece_height'] . 'x' . $item['piece_width'];
+                    if ($keyRev !== $key) {
+                        $reference[$keyRev] = (int)$item['pieces_count'];
+                    }
+                }
+
+                error_log("[cutting-reference/load] Found " . count($items) . " records, reference keys: " . count($reference));
+                jsonResponse(['success' => true, 'reference' => empty($reference) ? (object)[] : $reference, 'count' => count($items)]);
+            } catch (Exception $e) {
+                error_log("[cutting-reference/load] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка при загрузке: ' . $e->getMessage()], 500);
+            }
+            break;
+
+        // ==================== API: Справочник упаковки артикулов ====================
+
+        // Сохранить параметры упаковки артикула
+        case '/api/article-packaging/save':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            $input = json_decode(file_get_contents('php://input'), true);
+            
+            $articleId = trim($input['article_id'] ?? '');
+            $articleName = trim($input['article_name'] ?? '');
+            $piecesPerSheet = isset($input['pieces_per_sheet']) && $input['pieces_per_sheet'] !== null ? (int)$input['pieces_per_sheet'] : null;
+            $packQuantity = isset($input['pack_quantity']) && $input['pack_quantity'] !== null ? (int)$input['pack_quantity'] : null;
+            $sheetName = trim($input['sheet_name'] ?? '');
+
+            error_log("[article-packaging/save] user=$userId, article=$articleId, pieces=$piecesPerSheet, pack=$packQuantity");
+
+            if (empty($articleId)) {
+                jsonResponse(['success' => false, 'message' => 'Не указан артикул']);
+                break;
+            }
+
+            try {
+                $db = Database::getInstance();
+                $db->execute("SET NAMES utf8mb4");
+                
+                // Создать таблицу если не существует
+                $db->execute("CREATE TABLE IF NOT EXISTS article_packaging (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    article_id VARCHAR(100) NOT NULL COMMENT 'offer_id / nmID / артикул',
+                    article_name VARCHAR(255) DEFAULT NULL COMMENT 'Название для справки',
+                    pieces_per_sheet INT DEFAULT NULL COMMENT 'Единиц из 1 листа',
+                    pack_quantity INT DEFAULT NULL COMMENT 'Штук в упаковке',
+                    sheet_name VARCHAR(100) DEFAULT NULL COMMENT 'Название листа',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_user_article (user_id, article_id),
+                    INDEX idx_user (user_id),
+                    INDEX idx_article (article_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+                
+                // UPSERT: вставить или обновить
+                $sql = "INSERT INTO article_packaging 
+                        (user_id, article_id, article_name, pieces_per_sheet, pack_quantity, sheet_name)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON DUPLICATE KEY UPDATE 
+                            article_name = COALESCE(VALUES(article_name), article_name),
+                            pieces_per_sheet = COALESCE(VALUES(pieces_per_sheet), pieces_per_sheet),
+                            pack_quantity = COALESCE(VALUES(pack_quantity), pack_quantity),
+                            sheet_name = COALESCE(VALUES(sheet_name), sheet_name),
+                            updated_at = NOW()";
+
+                $db->execute($sql, [$userId, $articleId, $articleName ?: null, $piecesPerSheet, $packQuantity, $sheetName ?: null]);
+                
+                error_log("[article-packaging/save] OK: $articleId");
+                jsonResponse(['success' => true, 'message' => 'Сохранено в справочник']);
+            } catch (Exception $e) {
+                error_log("[article-packaging/save] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка при сохранении: ' . $e->getMessage()], 500);
+            }
+            break;
+
+        // Загрузить справочник упаковки (все артикулы пользователя)
+        case '/api/article-packaging/list':
+            $auth->requireLogin();
+            $userId = $auth->getUserId();
+
+            if (!isMethod('GET')) {
+                jsonResponse(['success' => false, 'message' => 'Метод не разрешён'], 405);
+            }
+
+            try {
+                $db = Database::getInstance();
+                $db->execute("SET NAMES utf8mb4");
+                
+                // Проверить существование таблицы
+                $tableExists = $db->fetchOne("SELECT COUNT(*) as cnt FROM information_schema.tables 
+                    WHERE table_schema = DATABASE() AND table_name = 'article_packaging'");
+                
+                if (!$tableExists || $tableExists['cnt'] == 0) {
+                    error_log("[article-packaging/list] Table does not exist");
+                    jsonResponse(['success' => true, 'data' => (object)[], 'count' => 0]);
+                    break;
+                }
+                
+                $sql = "SELECT article_id, pieces_per_sheet, pack_quantity 
+                        FROM article_packaging 
+                        WHERE user_id = ?";
+
+                $rows = $db->fetchAll($sql, [$userId]);
+
+                // Преобразовать в объект {article_id: {pieces_per_sheet, pack_quantity}}
+                $data = [];
+                foreach ($rows as $row) {
+                    $data[$row['article_id']] = [
+                        'pieces_per_sheet' => $row['pieces_per_sheet'] !== null ? (int)$row['pieces_per_sheet'] : null,
+                        'pack_quantity' => $row['pack_quantity'] !== null ? (int)$row['pack_quantity'] : null
+                    ];
+                }
+
+                error_log("[article-packaging/list] user=$userId, count=" . count($data));
+                jsonResponse(['success' => true, 'data' => empty($data) ? (object)[] : $data, 'count' => count($data)]);
+            } catch (Exception $e) {
+                error_log("[article-packaging/list] ERROR: " . $e->getMessage());
+                jsonResponse(['success' => false, 'message' => 'Ошибка при загрузке: ' . $e->getMessage()], 500);
+            }
+            break;
+
+        // ==================== System Logs API ====================
+
+        // Получение списка системных логов
+        case '/api/system/logs':
+            $auth->requireLogin();
+
+            if (isMethod('GET')) {
+                // Фильтры из query string
+                $filters = [
+                    'level' => get('level'),
+                    'category' => get('category'),
+                    'from' => get('from'),
+                    'to' => get('to'),
+                    'search' => get('search'),
+                    'user_id' => get('user_id')
+                ];
+
+                $limit = min((int)get('limit', 100), 500);
+                $offset = max((int)get('offset', 0), 0);
+
+                $result = SystemLogger::getLogs($filters, $limit, $offset);
+                jsonResponse([
+                    'success' => true,
+                    'logs' => $result['logs'],
+                    'total' => $result['total'],
+                    'limit' => $result['limit'],
+                    'offset' => $result['offset']
+                ]);
+            }
+
+            if (isMethod('POST')) {
+                // Запись лога из JS
+                $level = post('level', 'INFO');
+                $category = post('category', 'USER');
+                $message = post('message', '');
+                $context = post('context');
+
+                if (empty($message)) {
+                    jsonResponse(['success' => false, 'message' => 'Message required']);
+                }
+
+                $contextArray = [];
+                if ($context) {
+                    $contextArray = is_string($context) ? json_decode($context, true) : $context;
+                }
+
+                $success = SystemLogger::log($level, $category, $message, $contextArray ?: []);
+                jsonResponse(['success' => $success]);
+            }
+
+            jsonResponse(['success' => false, 'message' => 'Method not allowed'], 405);
+            break;
+
+        // Статистика логов
+        case '/api/system/logs/stats':
+            $auth->requireLogin();
+
+            $period = get('period', '24h');
+            $stats = SystemLogger::getStats($period);
+            jsonResponse(['success' => true, 'stats' => $stats]);
+            break;
+
+        // Очистка старых логов
+        case '/api/system/logs/cleanup':
+            $auth->requireLogin();
+
+            if ($auth->getUserRole() !== 'admin') {
+                jsonResponse(['success' => false, 'message' => 'Admin required'], 403);
+            }
+
+            if (!isMethod('DELETE') && !isMethod('POST')) {
+                jsonResponse(['success' => false, 'message' => 'Method not allowed'], 405);
+            }
+
+            $daysOld = (int)get('days', 30);
+            if ($daysOld < 1) $daysOld = 30;
+
+            $deleted = SystemLogger::cleanup($daysOld);
+            SystemLogger::info(SystemLogger::SYS, "Очистка логов: удалено {$deleted} записей старше {$daysOld} дней");
+
+            jsonResponse(['success' => true, 'deleted' => $deleted, 'days' => $daysOld]);
             break;
 
         // ==================== 404 ====================

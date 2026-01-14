@@ -376,6 +376,7 @@ class YMProductCache
         $result = $this->db->fetchAll("
             SELECT
                 pm.*,
+                pm.id as mapping_id,
                 ypc.offer_id,
                 ypc.shop_sku,
                 ypc.name as ym_name,
@@ -385,8 +386,10 @@ class YMProductCache
                 ypc.category_name,
                 ypc.vendor,
                 p.name as product_name,
+                p.name as name,
                 p.cost_price,
-                p.sku as product_sku
+                p.sku as product_sku,
+                p.sku as sku
             FROM product_mappings pm
             INNER JOIN ym_products_cache ypc ON ypc.offer_id = pm.marketplace_sku AND ypc.user_id = ?
             INNER JOIN products p ON p.id = pm.product_id
@@ -608,36 +611,38 @@ class YMProductCache
 
     /**
      * Парсинг артикула для определения pieces_per_sheet и quantity_in_pack
+     * Использует улучшенный алгоритм с таблицей известных раскладок и комбинированной раскладкой
      */
-    public function parseArticle(string $offerId, string $name = ''): array
+    public function parseArticle(string $offerId, string $name = '', int $baseWidth = 1520, int $baseHeight = 1520): array
     {
         $piecesPerSheet = 1;
         $quantityInPack = 1;
 
         $text = $offerId . ' ' . $name;
+        error_log("[YM parseArticle] INPUT: offerId='{$offerId}', name='{$name}'");
 
         // Ищем размер (например, 760x760, 1520x760)
         if (preg_match('/(\d+)[xхХ×](\d+)/iu', $text, $matches)) {
             $width = (int)$matches[1];
             $height = (int)$matches[2];
+            error_log("[YM parseArticle] Parsed dimensions: {$width}x{$height}");
 
             // Минимальный размер кусочка — 50мм (защита от нереалистичных значений)
             if ($width >= 50 && $height >= 50 && $width <= 10000 && $height <= 10000) {
-                // Базовый лист 1520x1520
-                $baseSize = 1520;
-
-                // Считаем сколько кусочков помещается
-                $piecesWidth = floor($baseSize / $width);
-                $piecesHeight = floor($baseSize / $height);
-                // Максимум 10000 кусочков (защита от переполнения)
-                $piecesPerSheet = min(10000, max(1, $piecesWidth * $piecesHeight));
+                // Используем улучшенный статический метод с комбинированной раскладкой
+                $piecesPerSheet = self::calculatePiecesPerSheet($baseWidth, $baseHeight, $width, $height);
+                error_log("[YM parseArticle] calculatePiecesPerSheet({$baseWidth}, {$baseHeight}, {$width}, {$height}) = {$piecesPerSheet}");
             }
+        } else {
+            error_log("[YM parseArticle] No dimensions found in: '{$text}'");
         }
 
         // Ищем количество в упаковке (например, 5шт, 10шт)
         if (preg_match('/(\d+)\s*(шт|штук|листов|лист)/iu', $text, $matches)) {
             $quantityInPack = max(1, min(10000, (int)$matches[1]));
         }
+
+        error_log("[YM parseArticle] RESULT: pieces_per_sheet={$piecesPerSheet}, quantity_in_pack={$quantityInPack}");
 
         return [
             'pieces_per_sheet' => $piecesPerSheet,
@@ -650,13 +655,26 @@ class YMProductCache
      */
     public function autoFillPiecesPerSheet(int $productId, int $baseWidth = 1520, int $baseHeight = 1520): int
     {
+        error_log("[YM autoFillPiecesPerSheet] START: productId={$productId}, baseSheet={$baseWidth}x{$baseHeight}");
+
         $articles = $this->getProductArticles($productId);
+        error_log("[YM autoFillPiecesPerSheet] Found " . count($articles) . " articles");
+
         $updated = 0;
 
         foreach ($articles as $article) {
-            $parsed = $this->parseArticle($article['offer_id'], $article['name'] ?? '');
+            $offerId = $article['offer_id'] ?? '';
+            $name = $article['name'] ?? '';
+            $mappingId = $article['mapping_id'] ?? 0;
 
-            if ($parsed['pieces_per_sheet'] > 1 || $parsed['quantity_in_pack'] > 1) {
+            error_log("[YM autoFillPiecesPerSheet] Processing: mapping_id={$mappingId}, offer_id='{$offerId}'");
+
+            $parsed = $this->parseArticle($offerId, $name, $baseWidth, $baseHeight);
+
+            error_log("[YM autoFillPiecesPerSheet] Parsed result: pps={$parsed['pieces_per_sheet']}, qty={$parsed['quantity_in_pack']}");
+
+            // Всегда обновляем, если есть размеры (не только если > 1)
+            if ($parsed['pieces_per_sheet'] >= 1) {
                 $this->db->execute("
                     UPDATE product_mappings
                     SET pieces_per_sheet = ?, quantity_in_pack = ?, updated_at = NOW()
@@ -664,12 +682,371 @@ class YMProductCache
                 ", [
                     $parsed['pieces_per_sheet'],
                     $parsed['quantity_in_pack'],
-                    $article['mapping_id']
+                    $mappingId
                 ]);
+                error_log("[YM autoFillPiecesPerSheet] UPDATED mapping_id={$mappingId}: pps={$parsed['pieces_per_sheet']}, qty={$parsed['quantity_in_pack']}");
                 $updated++;
             }
         }
 
+        error_log("[YM autoFillPiecesPerSheet] DONE: updated={$updated}");
         return $updated;
+    }
+
+    /**
+     * Статический метод парсинга артикула (для использования в endpoints)
+     * Аналог WBProductCache::parseArticleName()
+     */
+    public static function parseArticleName(string $article, string $name, int $baseWidth = 1520, int $baseHeight = 1520): array
+    {
+        $result = [
+            'width' => 0,
+            'height' => 0,
+            'quantity' => 1,
+            'pieces_per_sheet' => 1,
+            'format' => null
+        ];
+
+        // Формат "TхWхHмм" (толщина×ширина×высота)
+        if (preg_match('/(\d{1,2})\s*[xхХ×]\s*(\d{3,})\s*[xхХ×]\s*(\d{3,})/u', $name, $matches)) {
+            $result['width'] = (int)$matches[2];
+            $result['height'] = (int)$matches[3];
+        } elseif (preg_match('/(\d{1,2})\s*[xхХ×]\s*(\d{3,})\s*[xхХ×]\s*(\d{3,})/u', $article, $matches)) {
+            $result['width'] = (int)$matches[2];
+            $result['height'] = (int)$matches[3];
+        }
+
+        // Формат "76х76 см" (сантиметры)
+        if ($result['width'] === 0 && preg_match('/(\d{2,3})\s*[xхХ×]\s*(\d{2,3})\s*см/ui', $name, $matches)) {
+            $result['width'] = (int)$matches[1] * 10;
+            $result['height'] = (int)$matches[2] * 10;
+        } elseif ($result['width'] === 0 && preg_match('/(\d{2,3})\s*[xхХ×]\s*(\d{2,3})\s*см/ui', $article, $matches)) {
+            $result['width'] = (int)$matches[1] * 10;
+            $result['height'] = (int)$matches[2] * 10;
+        }
+
+        // Формат WxH (миллиметры)
+        if ($result['width'] === 0 && preg_match('/(\d+)\s*[xхХ×]\s*(\d+)/u', $article, $matches)) {
+            $result['width'] = (int)$matches[1];
+            $result['height'] = (int)$matches[2];
+        } elseif ($result['width'] === 0 && preg_match('/(\d+)\s*[xхХ×]\s*(\d+)/u', $name, $matches)) {
+            $result['width'] = (int)$matches[1];
+            $result['height'] = (int)$matches[2];
+        }
+
+        // Формат бумаги (A2, A3, A4, A5, A6)
+        if ($result['width'] === 0) {
+            $formats = [
+                2 => ['width' => 420, 'height' => 594],
+                3 => ['width' => 297, 'height' => 420],
+                4 => ['width' => 210, 'height' => 297],
+                5 => ['width' => 148, 'height' => 210],
+                6 => ['width' => 148, 'height' => 105],
+            ];
+
+            if (preg_match('/[AА](\d)/ui', $article, $matches)) {
+                $formatNum = (int)$matches[1];
+                if (isset($formats[$formatNum])) {
+                    $result['width'] = $formats[$formatNum]['width'];
+                    $result['height'] = $formats[$formatNum]['height'];
+                    $result['format'] = 'A' . $formatNum;
+                }
+            } elseif (preg_match('/[AА](\d)/ui', $name, $matches)) {
+                $formatNum = (int)$matches[1];
+                if (isset($formats[$formatNum])) {
+                    $result['width'] = $formats[$formatNum]['width'];
+                    $result['height'] = $formats[$formatNum]['height'];
+                    $result['format'] = 'A' . $formatNum;
+                }
+            }
+        }
+
+        // Количество: 5шт, 5 шт, 10 листов
+        if (preg_match('/[_\-\s]?(\d+)\s*(шт|штук|листов|лист)/ui', $article, $matches)) {
+            $result['quantity'] = max(1, min(10000, (int)$matches[1]));
+        } elseif (preg_match('/(\d+)\s*(шт|штук|листов|лист)/ui', $name, $matches)) {
+            $result['quantity'] = max(1, min(10000, (int)$matches[1]));
+        }
+
+        // Вычисляем pieces_per_sheet
+        if ($result['width'] >= 50 && $result['height'] >= 50) {
+            $result['pieces_per_sheet'] = self::calculatePiecesPerSheet(
+                $baseWidth, $baseHeight,
+                $result['width'], $result['height']
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Таблица известных оптимальных раскроев для листа 1520×1520
+     * Ключ: "pieceW×pieceH", значение: количество штук
+     */
+    private static array $knownLayouts1520 = [
+        '600x900' => 4,   // 2 прямо + 2 повёрнуто
+        '900x600' => 4,
+        '1000x500' => 4,  // 3 горизонтально + 1 в остаток
+        '500x1000' => 4,
+        '760x760' => 4,   // 2×2
+        '380x760' => 8,   // 4×2 или 2×4
+        '760x380' => 8,
+        '506x760' => 6,   // 2×3 или 3×2
+        '760x506' => 6,
+        '500x750' => 6,   // 3×2
+        '750x500' => 6,
+        '400x600' => 9,   // 3×3
+        '600x400' => 9,
+    ];
+
+    /**
+     * Расчёт количества кусочков из листа
+     * Учитывает комбинированную раскладку (часть деталей прямо, часть повёрнуто)
+     */
+    public static function calculatePiecesPerSheet(int $sheetWidth, int $sheetHeight, int $pieceWidth, int $pieceHeight): int
+    {
+        error_log("[YM calculatePiecesPerSheet] INPUT: sheet={$sheetWidth}x{$sheetHeight}, piece={$pieceWidth}x{$pieceHeight}");
+
+        if ($pieceWidth <= 0 || $pieceHeight <= 0) {
+            error_log("[YM calculatePiecesPerSheet] Invalid piece dimensions, return 1");
+            return 1;
+        }
+
+        // 1. Проверяем таблицу известных значений для листа 1520×1520
+        if ($sheetWidth === 1520 && $sheetHeight === 1520) {
+            $key1 = "{$pieceWidth}x{$pieceHeight}";
+            $key2 = "{$pieceHeight}x{$pieceWidth}";
+            error_log("[YM calculatePiecesPerSheet] Checking knownLayouts: key1={$key1}, key2={$key2}");
+
+            if (isset(self::$knownLayouts1520[$key1])) {
+                $val = self::$knownLayouts1520[$key1];
+                error_log("[YM calculatePiecesPerSheet] FOUND in table: {$key1} = {$val}");
+                return $val;
+            }
+            if (isset(self::$knownLayouts1520[$key2])) {
+                $val = self::$knownLayouts1520[$key2];
+                error_log("[YM calculatePiecesPerSheet] FOUND in table: {$key2} = {$val}");
+                return $val;
+            }
+            error_log("[YM calculatePiecesPerSheet] NOT found in knownLayouts table");
+        }
+
+        // 2. Вариант 1: Все детали в одном направлении
+        $variant1 = (int)(floor($sheetWidth / $pieceWidth) * floor($sheetHeight / $pieceHeight));
+
+        // 3. Вариант 2: Все детали повёрнуты на 90°
+        $variant2 = (int)(floor($sheetWidth / $pieceHeight) * floor($sheetHeight / $pieceWidth));
+
+        // 4. Вариант 3: Комбинированная раскладка (основной + в остаток по ширине)
+        $variant3 = self::calculateCombinedLayout($sheetWidth, $sheetHeight, $pieceWidth, $pieceHeight);
+
+        // 5. Вариант 4: Комбинированная с поворотом основных деталей
+        $variant4 = self::calculateCombinedLayout($sheetWidth, $sheetHeight, $pieceHeight, $pieceWidth);
+
+        $result = max($variant1, $variant2, $variant3, $variant4);
+        error_log("[YM calculatePiecesPerSheet] Variants: v1={$variant1}, v2={$variant2}, v3={$variant3}, v4={$variant4} => result={$result}");
+
+        return max(1, min(10000, $result));
+    }
+
+    /**
+     * Расчёт комбинированной раскладки
+     * Основные детали размещаются в одном направлении, в остаток — повёрнутые
+     */
+    private static function calculateCombinedLayout(int $sheetW, int $sheetH, int $pieceW, int $pieceH): int
+    {
+        $total = 0;
+
+        // Основная раскладка
+        $cols = (int)floor($sheetW / $pieceW);
+        $rows = (int)floor($sheetH / $pieceH);
+        $total += $cols * $rows;
+
+        // Остаток по ширине (справа от основной раскладки)
+        $remainW = $sheetW - ($cols * $pieceW);
+        if ($remainW >= $pieceH && $pieceW > 0) {
+            // В остаток по ширине можно положить повёрнутые детали
+            $extraCols = (int)floor($remainW / $pieceH);
+            $extraRows = (int)floor($sheetH / $pieceW);
+            $total += $extraCols * $extraRows;
+        }
+
+        // Остаток по высоте (снизу от основной раскладки)
+        $remainH = $sheetH - ($rows * $pieceH);
+        $usedWidth = $cols * $pieceW; // Ширина, занятая основной раскладкой
+        if ($remainH >= $pieceW && $pieceH > 0) {
+            // В остаток по высоте можно положить повёрнутые детали
+            // Но только в пределах ширины основной раскладки (чтобы не пересекаться с остатком по ширине)
+            $extraCols = (int)floor($usedWidth / $pieceH);
+            $extraRows = (int)floor($remainH / $pieceW);
+            $total += $extraCols * $extraRows;
+        }
+
+        return $total;
+    }
+
+    /**
+     * Статический метод парсинга размеров (для определения КГТ)
+     * Аналог WBProductCache::parseDimensions()
+     */
+    public static function parseDimensions(string $offerId, ?string $name = null): array
+    {
+        $dimensions = self::extractDimensionsFromText($offerId);
+
+        if (($dimensions['width'] === 0 || $dimensions['height'] === 0) && $name) {
+            $nameDimensions = self::extractDimensionsFromText($name);
+            if ($dimensions['width'] === 0 && $nameDimensions['width'] > 0) {
+                $dimensions['width'] = $nameDimensions['width'];
+            }
+            if ($dimensions['height'] === 0 && $nameDimensions['height'] > 0) {
+                $dimensions['height'] = $nameDimensions['height'];
+            }
+            if ($dimensions['thickness'] === 0 && $nameDimensions['thickness'] > 0) {
+                $dimensions['thickness'] = $nameDimensions['thickness'];
+            }
+        }
+
+        $dimensions['max_dimension'] = max($dimensions['width'], $dimensions['height'], $dimensions['thickness']);
+        $dimensions['is_oversized'] = ($dimensions['width'] > 1200 || $dimensions['height'] > 1200 || $dimensions['thickness'] > 1200);
+
+        return $dimensions;
+    }
+
+    /**
+     * Извлечь размеры из текста
+     */
+    private static function extractDimensionsFromText(string $text): array
+    {
+        $width = 0;
+        $height = 0;
+        $thickness = 0;
+
+        // Формат "3х500х500мм" (толщина×ширина×высота)
+        if (preg_match('/(\d{1,2})\s*[xхХ×]\s*(\d{3,})\s*[xхХ×]\s*(\d{3,})/u', $text, $matches)) {
+            return [
+                'width' => (int)$matches[2],
+                'height' => (int)$matches[3],
+                'thickness' => (int)$matches[1]
+            ];
+        }
+
+        // Формат "76х76 см" (сантиметры)
+        if (preg_match('/(\d{2,3})\s*[xхХ×]\s*(\d{2,3})\s*см/ui', $text, $matches)) {
+            return [
+                'width' => (int)$matches[1] * 10,
+                'height' => (int)$matches[2] * 10,
+                'thickness' => 0
+            ];
+        }
+
+        // Формат WxH (миллиметры)
+        if (preg_match('/(\d+)\s*[xхХ×]\s*(\d+)/u', $text, $matches)) {
+            $width = (int)$matches[1];
+            $height = (int)$matches[2];
+        }
+
+        return [
+            'width' => $width,
+            'height' => $height,
+            'thickness' => $thickness
+        ];
+    }
+
+    /**
+     * Сохранить настройки артикулов (цена, остатки, раскрой)
+     * @param int $productId ID товара
+     * @param array $markups Массив настроек [{mapping_id, pieces_per_sheet, price, stock}, ...]
+     * @return int Количество сохранённых записей
+     */
+    public function saveArticleSettings(int $productId, array $markups): int
+    {
+        error_log("[YM saveArticleSettings] START: productId={$productId}, markups=" . count($markups));
+
+        // Проверяем наличие полей cached_price и cached_stock
+        $hasCachedFields = $this->checkCachedFieldsExist();
+        error_log("[YM saveArticleSettings] hasCachedFields=" . ($hasCachedFields ? 'YES' : 'NO'));
+
+        $saved = 0;
+
+        foreach ($markups as $item) {
+            $mappingId = (int)($item['mapping_id'] ?? 0);
+            if (!$mappingId) continue;
+
+            $piecesPerSheet = isset($item['pieces_per_sheet']) && $item['pieces_per_sheet'] !== null
+                ? (int)$item['pieces_per_sheet'] : null;
+            $price = isset($item['price']) && $item['price'] !== null
+                ? (float)$item['price'] : null;
+            $stock = isset($item['stock']) && $item['stock'] !== null
+                ? (int)$item['stock'] : null;
+
+            error_log("[YM saveArticleSettings] Item: mapping_id={$mappingId}, pps={$piecesPerSheet}, price={$price}, stock={$stock}");
+
+            // Формируем SET часть динамически
+            $sets = [];
+            $params = [];
+
+            if ($piecesPerSheet !== null && $piecesPerSheet > 0) {
+                $sets[] = 'pieces_per_sheet = ?';
+                $params[] = max(1, min(10000, $piecesPerSheet));
+            }
+
+            // Сохраняем цену и остатки только если поля существуют
+            if ($hasCachedFields) {
+                if ($price !== null && $price > 0) {
+                    $sets[] = 'cached_price = ?';
+                    $params[] = max(0, $price);
+                }
+
+                if ($stock !== null) {
+                    $sets[] = 'cached_stock = ?';
+                    $params[] = max(0, $stock);
+                }
+            }
+
+            if (empty($sets)) {
+                error_log("[YM saveArticleSettings] Skip mapping_id={$mappingId} - no fields to update");
+                continue;
+            }
+
+            $sets[] = 'updated_at = NOW()';
+            $params[] = $mappingId;
+            $params[] = $productId;
+            $params[] = $this->userId;
+
+            $sql = "UPDATE product_mappings SET " . implode(', ', $sets) .
+                   " WHERE id = ? AND product_id = ? AND user_id = ?";
+
+            error_log("[YM saveArticleSettings] SQL: {$sql}, params=" . json_encode($params));
+
+            try {
+                $this->db->execute($sql, $params);
+                $saved++;
+                error_log("[YM saveArticleSettings] SUCCESS: mapping_id={$mappingId}");
+            } catch (Exception $e) {
+                error_log("[YM saveArticleSettings] ERROR: mapping_id={$mappingId}, " . $e->getMessage());
+            }
+        }
+
+        error_log("[YM saveArticleSettings] DONE: saved={$saved}");
+        return $saved;
+    }
+
+    /**
+     * Проверить наличие полей cached_price и cached_stock в таблице
+     */
+    private function checkCachedFieldsExist(): bool
+    {
+        try {
+            $result = $this->db->fetchOne(
+                "SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                 AND TABLE_NAME = 'product_mappings'
+                 AND COLUMN_NAME = 'cached_price'"
+            );
+            return ($result['cnt'] ?? 0) > 0;
+        } catch (Exception $e) {
+            error_log("[YM checkCachedFieldsExist] Error: " . $e->getMessage());
+            return false;
+        }
     }
 }

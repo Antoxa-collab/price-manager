@@ -9,6 +9,12 @@ const OzonCalculator = {
     articles: [],           // Артикулы выбранного товара
     selectedProduct: null,  // Выбранный товар
     selectedArticles: new Set(), // Выбранные артикулы для загрузки
+    packagingReference: {}, // Кэш справочника упаковки из БД
+    
+    // Сортировка таблицы
+    sortColumn: null,       // 'article' или 'name'
+    sortDirection: 'asc',   // 'asc' или 'desc'
+    sortStorageKey: 'ozon_calculator_sort', // Ключ localStorage
 
     /**
      * Инициализация модуля
@@ -20,6 +26,8 @@ const OzonCalculator = {
         this.loadSheetSelect();
         this.loadSettings(); // Загружаем сохранённые настройки наценок
         this.initTooltips();
+        this.initSort(); // Инициализация сортировки таблицы
+        this.loadPackagingReference(); // Загрузить справочник упаковки из БД
         console.log('OzonCalculator.init() completed');
     },
 
@@ -74,6 +82,169 @@ const OzonCalculator = {
         } catch (e) {
             console.warn('Не удалось сохранить настройки калькулятора:', e);
         }
+    },
+
+    // =============================================
+    // СОРТИРОВКА ТАБЛИЦЫ АРТИКУЛОВ
+    // =============================================
+
+    /**
+     * Инициализация сортировки
+     */
+    initSort() {
+        this.loadSortSettings();
+        if (this.sortColumn) {
+            this.sortArticles();
+        }
+    },
+
+    /**
+     * Загрузить настройки сортировки из localStorage
+     */
+    loadSortSettings() {
+        try {
+            const saved = localStorage.getItem(this.sortStorageKey);
+            if (saved) {
+                const settings = JSON.parse(saved);
+                this.sortColumn = settings.column || null;
+                this.sortDirection = settings.direction || 'asc';
+                console.log(`[Sort] Загружено: ${this.sortColumn} ${this.sortDirection}`);
+            }
+        } catch (e) {
+            console.warn('[Sort] Ошибка загрузки настроек:', e);
+        }
+    },
+
+    /**
+     * Сохранить настройки сортировки
+     */
+    saveSortSettings() {
+        try {
+            const settings = {
+                column: this.sortColumn,
+                direction: this.sortDirection
+            };
+            localStorage.setItem(this.sortStorageKey, JSON.stringify(settings));
+        } catch (e) {
+            console.warn('[Sort] Ошибка сохранения:', e);
+        }
+    },
+
+    /**
+     * Обработчик клика по заголовку
+     */
+    handleSortClick(column) {
+        console.log(`[Sort] Клик по колонке: ${column}`);
+        
+        if (this.sortColumn === column) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sortColumn = column;
+            this.sortDirection = 'asc';
+        }
+        
+        this.sortArticles();
+        this.saveSortSettings();
+        this.renderArticlesTable();
+    },
+
+    /**
+     * Сортировка массива артикулов
+     */
+    sortArticles() {
+        if (!this.sortColumn || !this.articles || this.articles.length === 0) {
+            return;
+        }
+        
+        const direction = this.sortDirection === 'asc' ? 1 : -1;
+        
+        this.articles.sort((a, b) => {
+            let valA, valB;
+            
+            if (this.sortColumn === 'article') {
+                valA = (a.offer_id || a.sku || a.article || '').toString().toLowerCase();
+                valB = (b.offer_id || b.sku || b.article || '').toString().toLowerCase();
+            } else if (this.sortColumn === 'name') {
+                valA = (a.name || a.ozon_name || a.title || '').toLowerCase();
+                valB = (b.name || b.ozon_name || b.title || '').toLowerCase();
+            } else {
+                return 0;
+            }
+            
+            return valA.localeCompare(valB, 'ru', { numeric: true }) * direction;
+        });
+        
+        console.log(`[Sort] Отсортировано: ${this.sortColumn} ${this.sortDirection}`);
+    },
+
+    /**
+     * Обновить индикаторы сортировки в заголовках
+     */
+    updateSortIndicators() {
+        document.querySelectorAll('#ozonArticlesTable th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+        
+        if (this.sortColumn) {
+            const activeHeader = document.querySelector(`#ozonArticlesTable th[data-sort="${this.sortColumn}"]`);
+            if (activeHeader) {
+                activeHeader.classList.add(this.sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+            }
+        }
+    },
+
+    /**
+     * Загрузка справочника упаковки по артикулам из БД
+     */
+    async loadPackagingReference() {
+        try {
+            const response = await App.fetch('/api/article-packaging/list');
+            if (response.success && response.data) {
+                this.packagingReference = response.data;
+                console.log('[loadPackagingReference] Загружено записей:', Object.keys(this.packagingReference).length);
+            }
+        } catch (error) {
+            console.warn('[loadPackagingReference] Ошибка загрузки:', error);
+            this.packagingReference = {};
+        }
+        return this.packagingReference;
+    },
+
+    /**
+     * Сохранение упаковки артикула в БД
+     */
+    async savePackagingToDb(articleId, articleName, piecesPerSheet, packQuantity, sheetName) {
+        if (!articleId || !piecesPerSheet) {
+            console.warn('[savePackagingToDb] Недостаточно данных для сохранения');
+            return false;
+        }
+        
+        try {
+            const response = await App.fetch('/api/article-packaging/save', {
+                method: 'POST',
+                body: {
+                    article_id: articleId,
+                    article_name: articleName || '',
+                    pieces_per_sheet: piecesPerSheet,
+                    pack_quantity: packQuantity || 1,
+                    sheet_name: sheetName || ''
+                }
+            });
+            
+            if (response.success) {
+                // Обновляем локальный кэш
+                this.packagingReference[articleId] = {
+                    pieces_per_sheet: piecesPerSheet,
+                    pack_quantity: packQuantity || 1,
+                    sheet_name: sheetName || ''
+                };
+                console.log(`[savePackagingToDb] Сохранено: ${articleId} = ${piecesPerSheet} шт`);
+                return true;
+            }
+        } catch (error) {
+            console.error('[savePackagingToDb] Ошибка:', error);
+        }
+        return false;
     },
 
     /**
@@ -164,6 +335,9 @@ const OzonCalculator = {
 
         // Загрузка только остатков
         document.getElementById('uploadStocksOnlyBtn')?.addEventListener('click', () => this.uploadStocksOnly());
+
+        // Корректировка минимальной цены
+        document.getElementById('applyMinPriceCorrectionBtn')?.addEventListener('click', () => this.applyMinPriceCorrection());
     },
 
     /**
@@ -430,6 +604,9 @@ const OzonCalculator = {
         const tbody = document.getElementById('articlesTableBody');
         if (!tbody) return;
 
+        // Применить сортировку перед рендерингом
+        this.sortArticles();
+
         document.getElementById('articlesCount').textContent = this.articles.length;
 
         // Показываем/скрываем блок управления остатками
@@ -455,6 +632,7 @@ const OzonCalculator = {
                     </td>
                 </tr>
             `;
+            this.updateSortIndicators();
             return;
         }
 
@@ -522,6 +700,7 @@ const OzonCalculator = {
         });
 
         this.updateSelectionInfo();
+        this.updateSortIndicators();
     },
 
     /**
@@ -692,6 +871,9 @@ const OzonCalculator = {
             // Обновляем локальные данные
             this.selectedProduct.markup_min_price = markupMin;
             this.selectedProduct.markup_your_price = markupYour;
+
+            // Дополнительно: сохранить справочник раскроя
+            await this.saveCuttingReference();
 
             App.showToast('Наценки сохранены', 'success');
         } catch (error) {
@@ -937,14 +1119,66 @@ const OzonCalculator = {
     },
 
     /**
+     * Сохранить одну запись в справочник раскроя
+     */
+    /**
+     * Сохранить одну запись в справочник раскроя
+     * @returns {boolean} true если успешно сохранено в БД
+     */
+    async saveToCuttingReference(sheetName, pieceWidth, pieceHeight, piecesCount) {
+        // Определить размеры листа
+        const sheetSelect = document.getElementById('sheetSelect');
+        const selectedOption = sheetSelect?.selectedOptions[0];
+        
+        let sheetWidth = 1400, sheetHeight = 1030;
+        if (selectedOption) {
+            sheetWidth = parseInt(selectedOption.dataset.width) || 1400;
+            sheetHeight = parseInt(selectedOption.dataset.height) || 1030;
+        }
+        
+        console.log(`[saveToCuttingReference] Сохраняем: ${pieceWidth}×${pieceHeight} = ${piecesCount} → "${sheetName}"`);
+        
+        try {
+            const response = await App.fetch('/api/cutting-reference/save', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sheet_name: sheetName,
+                    sheet_width: sheetWidth,
+                    sheet_height: sheetHeight,
+                    items: [{
+                        piece_width: pieceWidth,
+                        piece_height: pieceHeight,
+                        pieces_count: piecesCount
+                    }]
+                })
+            });
+            
+            if (response.success) {
+                console.log(`[saveToCuttingReference] ✅ Сохранено в БД: ${pieceWidth}×${pieceHeight} = ${piecesCount}`);
+                return true;
+            } else {
+                console.error(`[saveToCuttingReference] ❌ Ошибка от сервера:`, response);
+                return false;
+            }
+        } catch (error) {
+            console.error('[saveToCuttingReference] ❌ Ошибка запроса:', error);
+            return false;
+        }
+    },
+
+    /**
      * Сохранить параметры упаковки
+     * ВАЖНО: Сохраняет в БД для последующего использования в "Авто"
      */
     async savePackSettings() {
         const mappingId = document.getElementById('editPackMappingId').value;
         const piecesPerSheet = parseInt(document.getElementById('editPiecesPerSheet').value) || 1;
         const quantityInPack = parseInt(document.getElementById('editQuantityInPack').value) || 1;
 
+        console.log(`[savePackSettings] Начало сохранения: mappingId=${mappingId}, pieces=${piecesPerSheet}, qty=${quantityInPack}`);
+
         try {
+            // 1. Сохранить в таблицу маппингов
             await App.fetch('/api/ozon/update-pack-settings', {
                 method: 'POST',
                 body: {
@@ -955,13 +1189,47 @@ const OzonCalculator = {
             });
 
             bootstrap.Modal.getInstance(document.getElementById('editPackModal'))?.hide();
-            App.showToast('Сохранено', 'success');
 
-            // Обновляем локальные данные
+            // 2. Обновляем локальные данные
             const article = this.articles.find(a => String(a.mapping_id) === String(mappingId));
             if (article) {
                 article.pieces_per_sheet = piecesPerSheet;
                 article.quantity_in_pack = quantityInPack;
+                
+                // 3. Сохранить в справочник раскроя (КРИТИЧНО!)
+                const sheetSelect = document.getElementById('sheetSelect');
+                const sheetName = (sheetSelect?.selectedOptions[0]?.textContent || '').trim();
+                
+                // ПРИОРИТЕТ: используем offer_id как уникальный ID артикула
+                const articleName = article.name || article.offer_id || '';
+                const articleId = article.offer_id || article.sku || String(mappingId);
+                
+                console.log(`[savePackSettings] Сохраняем в БД: articleId=${articleId}, pieces=${piecesPerSheet}, pack=${quantityInPack}`);
+                
+                if (sheetName) {
+                    const dimensions = parseArticleDimensions(articleName);
+                    
+                    console.log(`[savePackSettings] Размеры:`, dimensions);
+                    
+                    if (dimensions && dimensions.width && dimensions.height && piecesPerSheet > 0) {
+                        const saved = await this.saveToCuttingReference(sheetName, dimensions.width, dimensions.height, piecesPerSheet);
+                        if (saved) {
+                            App.showToast(`✅ Сохранено в справочник: ${dimensions.width}×${dimensions.height} = ${piecesPerSheet} шт`, 'success');
+                        } else {
+                            App.showToast('✅ Сохранено в справочник артикулов', 'success');
+                        }
+                    } else {
+                        console.log('[savePackSettings] Размеры не определены, сохраняем по артикулу');
+                        App.showToast('✅ Сохранено в справочник артикулов', 'success');
+                    }
+                    
+                    // 4. Сохраняем в справочник упаковки по артикулу
+                    await this.savePackagingToDb(articleId, articleName, piecesPerSheet, quantityInPack, sheetName);
+                } else {
+                    // Сохраняем по артикулу даже без листа
+                    await this.savePackagingToDb(articleId, articleName, piecesPerSheet, quantityInPack, '');
+                    App.showToast('✅ Сохранено', 'success');
+                }
             }
 
             // Пересчитываем цены
@@ -977,9 +1245,160 @@ const OzonCalculator = {
      * Парсит размеры (760x760) и количество (5шт) из названий на Ozon
      * Использует справочник раскроя для получения фактического количества кусочков
      */
+    /**
+     * Автозаполнение pieces_per_sheet из справочника раскроя
+     * 
+     * ПРАВИЛЬНАЯ ЛОГИКА:
+     * - Артикулы берём из таблицы (привязаны к выбранному ТОВАРУ слева)
+     * - Лист справа — это только параметр для расчёта количества деталей
+     */
+
+    /**
+     * Сохранить справочник раскроя в БД
+     */
+    async saveCuttingReference() {
+        const sheetSelect = document.getElementById('sheetSelect');
+        const selectedOption = sheetSelect?.selectedOptions[0];
+
+        if (!selectedOption) {
+            console.log('[saveCuttingReference] Лист не выбран');
+            return;
+        }
+
+        const sheetName = (selectedOption.textContent || '').trim();
+        const sheetWidth = parseInt(selectedOption.dataset.width) || 1400;
+        const sheetHeight = parseInt(selectedOption.dataset.height) || 1030;
+
+        // Собрать данные из таблицы
+        const items = [];
+
+        this.articles.forEach(article => {
+            const name = article.ozon_name || article.sku || '';
+            const dimensions = parseArticleDimensions(name);
+            const piecesPerSheet = parseInt(article.pieces_per_sheet) || 0;
+
+            if (dimensions && dimensions.width && dimensions.height && piecesPerSheet > 0) {
+                items.push({
+                    piece_width: dimensions.width,
+                    piece_height: dimensions.height,
+                    pieces_count: piecesPerSheet
+                });
+            }
+        });
+
+        if (items.length === 0) {
+            console.log('[saveCuttingReference] Нет данных для сохранения');
+            return;
+        }
+
+        try {
+            const response = await App.fetch('/api/cutting-reference/save', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sheet_name: sheetName,
+                    sheet_width: sheetWidth,
+                    sheet_height: sheetHeight,
+                    items: items
+                })
+            });
+
+            if (response.success) {
+                console.log(`[saveCuttingReference] Сохранено ${response.saved} записей в справочник "${sheetName}"`);
+            }
+        } catch (error) {
+            console.error('[saveCuttingReference] Ошибка:', error);
+        }
+    },
+
+    /**
+     * Загрузить справочник из БД (приоритет) или использовать дефолтный
+     */
+    /**
+     * Загрузить справочник раскроя
+     * ПРИОРИТЕТ: БД > дефолтный справочник
+     * Объединяет данные: сначала дефолт, потом БД перезаписывает
+     */
+    async loadCuttingReference(sheetName) {
+        // 1. Начинаем с дефолтного справочника
+        const defaultRef = this.getDefaultCuttingReference(sheetName);
+        console.log(`[loadCuttingReference] Дефолтный справочник: ${Object.keys(defaultRef).length} позиций`);
+        
+        // 2. Пробуем загрузить из БД
+        let dbRef = {};
+        try {
+            const response = await App.fetch(`/api/cutting-reference/load?sheet_name=${encodeURIComponent(sheetName)}`);
+            
+            if (response.success && response.reference && Object.keys(response.reference).length > 0) {
+                dbRef = response.reference;
+                console.log(`[loadCuttingReference] ✅ Загружено из БД: ${Object.keys(dbRef).length} позиций`);
+                console.log(`[loadCuttingReference] Данные БД:`, dbRef);
+            } else {
+                console.log(`[loadCuttingReference] БД пуста для листа "${sheetName}"`);
+            }
+        } catch (error) {
+            console.warn('[loadCuttingReference] ❌ Ошибка загрузки из БД:', error);
+        }
+        
+        // 3. Объединяем: дефолт + БД (БД перезаписывает дефолт!)
+        const merged = { ...defaultRef, ...dbRef };
+        console.log(`[loadCuttingReference] Итого после объединения: ${Object.keys(merged).length} позиций`);
+        
+        return merged;
+    },
+
+    /**
+     * Дефолтный справочник для листа 1400×1030
+     */
+    /**
+     * Дефолтный справочник раскроя для листа "Другой 1400×1030"
+     * Данные: выход деталей с 2 листов 1400×1030 (= один лист 2800×2070 разрезанный пополам)
+     * Применяется для товаров: МДФ, L-MDF
+     */
+    getDefaultCuttingReference(sheetName) {
+        if (sheetName.includes('Другой') || sheetName.includes('1400')) {
+            return {
+                // Основные размеры
+                '500x400': 12, '400x500': 12,
+                '1350x700': 2, '700x1350': 2,
+                '600x450': 8, '450x600': 8,
+                '500x500': 8,
+                '750x550': 4, '550x750': 4,
+                '600x400': 10, '400x600': 10,  // ИСПРАВЛЕНО: было 8
+                '600x600': 4,
+                '300x300': 24,
+                '600x500': 8, '500x600': 8,
+                '400x300': 18, '300x400': 18,
+                '350x250': 32, '250x350': 32,
+                '800x600': 8, '600x800': 8,    // ИСПРАВЛЕНО: было 4
+                '700x500': 8, '500x700': 8,    // ИСПРАВЛЕНО: было 6
+                '750x600': 4, '600x750': 4,
+                
+                // Форматы А4, А3
+                '297x210': 38, '210x297': 38,  // А4
+                '420x297': 18, '297x420': 18,  // А3
+                
+                // Размеры KIT (1350×...)
+                '1350x400': 3, '400x1350': 3,
+                '1350x300': 4, '300x1350': 4,
+                '1350x500': 2, '500x1350': 2,
+                '1350x600': 2, '600x1350': 2,
+                '1350x800': 1, '800x1350': 1,  // ДОБАВЛЕНО
+                '1350x900': 1, '900x1350': 1
+            };
+        }
+
+        return {};
+    },
+
     async autoFillFromNames() {
         if (!this.selectedProduct) {
             App.showToast('Сначала выберите товар', 'warning');
+            return;
+        }
+
+        // Проверяем, есть ли артикулы
+        if (!this.articles || this.articles.length === 0) {
+            App.showToast('В таблице нет артикулов', 'warning');
             return;
         }
 
@@ -991,30 +1410,133 @@ const OzonCalculator = {
         // Получаем выбранный размер листа из справочника
         const sheetSelect = document.getElementById('sheetSelect');
         const selectedOption = sheetSelect?.selectedOptions[0];
+
+        if (!selectedOption) {
+            App.showToast('Выберите лист для расчёта', 'warning');
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            return;
+        }
+
         const baseWidth = parseInt(selectedOption?.dataset?.width) || 1520;
         const baseHeight = parseInt(selectedOption?.dataset?.height) || 1520;
+        const sheetName = (selectedOption?.textContent || '').trim();
 
         try {
-            const result = await App.fetch('/api/ozon/auto-fill-pieces', {
-                method: 'POST',
-                body: {
-                    product_id: this.selectedProduct.id,
-                    base_width: baseWidth,
-                    base_height: baseHeight
-                }
-            });
+            // Загрузить справочники
+            await this.loadPackagingReference();
+            const cuttingReference = await this.loadCuttingReference(sheetName);
 
-            if (result.success) {
+            let fromPackaging = 0;
+            let fromCutting = 0;
+            let fromServer = 0;
+            const notFoundArticles = [];
+            const alreadyFilled = new Set(); // Артикулы с данными из БД/раскроя
+
+            console.log(`[autoFillFromNames] Обработка ${this.articles.length} артикулов...`);
+            console.log(`[autoFillFromNames] Справочник артикулов: ${Object.keys(this.packagingReference).length} записей`);
+            console.log(`[autoFillFromNames] Справочник раскроя: ${Object.keys(cuttingReference).length} позиций`);
+
+            for (const article of this.articles) {
+                // Получить название и ID артикула
+                const articleName = article.ozon_name || article.sku || '';
+                const articleId = article.offer_id || article.sku || String(article.mapping_id);
+
+                // ПРИОРИТЕТ 1: Проверяем справочник упаковки по артикулу
+                if (this.packagingReference[articleId]?.pieces_per_sheet) {
+                    const packData = this.packagingReference[articleId];
+                    article.pieces_per_sheet = packData.pieces_per_sheet;
+                    if (packData.pack_quantity) {
+                        article.quantity_in_pack = packData.pack_quantity;
+                    }
+                    alreadyFilled.add(articleId); // Пометить как заполненный
+                    console.log(`[autoFill] ✓ ${articleId} = ${packData.pieces_per_sheet} (БД)`);
+                    fromPackaging++;
+                    continue;
+                }
+
+                // Парсить размеры из названия
+                const dimensions = parseArticleDimensions(articleName);
+
+                if (!dimensions || !dimensions.width || !dimensions.height) {
+                    console.log(`[autoFill] ? ${articleName}: размеры не определены`);
+                    notFoundArticles.push(article);
+                    continue;
+                }
+
+                // ПРИОРИТЕТ 2: Поискать в справочнике раскроя
+                const key1 = `${dimensions.width}x${dimensions.height}`;
+                const key2 = `${dimensions.height}x${dimensions.width}`;
+
+                const pieces = cuttingReference[key1] || cuttingReference[key2];
+
+                if (pieces && pieces > 0) {
+                    article.pieces_per_sheet = pieces;
+                    alreadyFilled.add(articleId); // Пометить как заполненный
+                    console.log(`[autoFill] ✓ ${articleName} (${key1}) = ${pieces} (раскрой)`);
+                    fromCutting++;
+                } else {
+                    console.log(`[autoFill] ? ${articleName}: не найден, требуется расчёт`);
+                    notFoundArticles.push(article);
+                }
+            }
+
+            // Проход 3: Если не найдено в справочниках → запрос к серверу
+            // Отправляем ТОЛЬКО артикулы без данных
+            if (notFoundArticles.length > 0) {
+                console.log(`[autoFill] ${notFoundArticles.length} артикулов требуют расчёта на сервере`);
+
+                // Собираем ID артикулов для расчёта
+                const articleIdsForCalc = notFoundArticles.map(a =>
+                    a.offer_id || a.sku || String(a.mapping_id)
+                );
+
+                const result = await App.fetch('/api/ozon/auto-fill-pieces', {
+                    method: 'POST',
+                    body: {
+                        product_id: this.selectedProduct.id,
+                        base_width: baseWidth,
+                        base_height: baseHeight,
+                        article_ids: articleIdsForCalc // Передаём список артикулов для расчёта
+                    }
+                });
+
+                if (result.success && result.pieces_data) {
+                    // Применяем результаты ТОЛЬКО к артикулам из notFoundArticles
+                    for (const article of notFoundArticles) {
+                        const articleId = article.offer_id || article.sku || String(article.mapping_id);
+
+                        // Дополнительная проверка — не перезаписывать если уже заполнено
+                        if (!alreadyFilled.has(articleId) && result.pieces_data[articleId]) {
+                            article.pieces_per_sheet = result.pieces_data[articleId];
+                            console.log(`[autoFill] ✓ ${articleId} = ${result.pieces_data[articleId]} (сервер)`);
+                            fromServer++;
+                        }
+                    }
+                } else if (result.success) {
+                    // Fallback: если сервер не вернул pieces_data
+                    fromServer = result.updated || 0;
+                    console.log(`[autoFill] Сервер обновил ${fromServer} артикулов (без детализации)`);
+                }
+            }
+
+            const totalUpdated = fromPackaging + fromCutting + fromServer;
+            console.log(`[autoFillPieces] Итого: БД=${fromPackaging}, раскрой=${fromCutting}, сервер=${fromServer}`);
+
+            // Результат — НЕ перезагружаем артикулы, чтобы не потерять данные из БД
+            if (totalUpdated > 0) {
                 const sheetInfo = `(лист ${baseWidth}×${baseHeight})`;
-                App.showToast(`Обновлено ${result.updated} артикулов ${sheetInfo}`, 'success');
-                // Перезагружаем артикулы чтобы увидеть обновлённые данные
-                await this.loadArticles(this.selectedProduct.id);
+                App.showToast(`✓ Обновлено ${totalUpdated} артикулов ${sheetInfo}`, 'success');
+
+                // Только перерендерить таблицу и пересчитать цены
+                this.renderArticlesTable();
                 this.recalculatePrices();
             } else {
-                App.showToast('Ошибка: ' + (result.message || 'Неизвестная ошибка'), 'danger');
+                App.showToast('Не удалось определить размеры артикулов', 'warning');
             }
         } catch (error) {
             App.showToast('Ошибка: ' + error.message, 'danger');
+            console.error('[autoFillFromNames] Исключение:', error);
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
@@ -1074,6 +1596,111 @@ const OzonCalculator = {
 
         document.getElementById('bulkStock').value = 0;
         App.showToast('Все остатки обнулены', 'info');
+    },
+
+    /**
+     * Корректировка минимальной цены
+     * Поднимает calculated_min_price для артикулов, где она ниже указанного порога
+     */
+    async applyMinPriceCorrection() {
+        const thresholdInput = document.getElementById('minPriceCorrection');
+        const threshold = parseFloat(thresholdInput?.value) || 0;
+
+        if (threshold <= 0) {
+            App.showToast('Укажите порог минимальной цены', 'warning');
+            thresholdInput?.focus();
+            return;
+        }
+
+        if (this.articles.length === 0) {
+            App.showToast('Нет артикулов для обработки', 'warning');
+            return;
+        }
+
+        console.log('[applyMinPriceCorrection] Порог:', threshold);
+        console.log('[applyMinPriceCorrection] Артикулов:', this.articles.length);
+
+        // Показать первый артикул для отладки
+        if (this.articles.length > 0) {
+            console.log('[applyMinPriceCorrection] Пример артикула:', this.articles[0]);
+        }
+
+        // Находим артикулы с calculated_min_price > 0 и ниже порога
+        const articlesToUpdate = [];
+        this.articles.forEach(article => {
+            // Правильное поле: calculated_min_price (рассчитанная мин. цена)
+            const currentMinPrice = parseFloat(article.calculated_min_price) || 0;
+
+            // Поднимаем только если цена установлена (> 0) И ниже порога
+            if (currentMinPrice > 0 && currentMinPrice < threshold) {
+                console.log(`[applyMinPriceCorrection] ${article.marketplace_offer_id}: ${currentMinPrice} → ${threshold}`);
+                articlesToUpdate.push({
+                    offer_id: article.marketplace_offer_id,
+                    old_min_price: currentMinPrice,
+                    min_price: threshold
+                });
+            }
+        });
+
+        console.log('[applyMinPriceCorrection] Найдено для обновления:', articlesToUpdate.length);
+
+        if (articlesToUpdate.length === 0) {
+            App.showToast(`Нет артикулов с мин. ценой ниже ${threshold}₽`, 'info');
+            return;
+        }
+
+        // Подтверждение
+        const confirmed = await App.confirm(
+            `Поднять мин. цену до ${threshold}₽ для ${articlesToUpdate.length} артикулов?`,
+            'Корректировка мин. цены'
+        );
+        if (!confirmed) return;
+
+        const btn = document.getElementById('applyMinPriceCorrectionBtn');
+        const originalHtml = btn?.innerHTML || '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        }
+
+        try {
+            // Отправляем на сервер для сохранения в БД
+            const result = await App.fetch('/api/ozon/bulk-update-min-prices', {
+                method: 'POST',
+                body: {
+                    min_threshold: threshold,
+                    articles: JSON.stringify(articlesToUpdate)
+                }
+            });
+
+            if (result.success) {
+                // Обновляем локальные данные: custom_min_price и флаги
+                articlesToUpdate.forEach(upd => {
+                    const article = this.articles.find(a => a.marketplace_offer_id === upd.offer_id);
+                    if (article) {
+                        article.custom_min_price = threshold;
+                        article.has_custom_min_price = true;
+                        article.min_price_edited = true;
+                    }
+                });
+
+                // Пересчитываем цены с новыми custom_min_price
+                this.recalculatePrices();
+
+                App.showToast(`Поднято ${articlesToUpdate.length} артикулов до ${threshold}₽`, 'success');
+            } else {
+                App.showToast('Ошибка: ' + (result.message || 'Неизвестная ошибка'), 'danger');
+            }
+
+        } catch (error) {
+            console.error('Min price correction error:', error);
+            App.showToast('Ошибка: ' + error.message, 'danger');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
     },
 
     /**

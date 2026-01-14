@@ -63,6 +63,9 @@
     <!-- Custom JS -->
     <script src="/js/app.js"></script>
 
+    <!-- Справочник раскроя листов -->
+    <script src="/js/cutting-reference.js"></script>
+
     <?php if (isset($pageScript)): ?>
     <script src="/js/<?= e($pageScript) ?>.js"></script>
     <?php endif; ?>
